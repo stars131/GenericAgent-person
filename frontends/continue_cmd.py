@@ -2,12 +2,20 @@
 Pure functions + one `install(cls)` monkey-patch entry. No side effects at import.
 """
 import ast, glob, json, os, re, time
-_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        'temp', 'model_responses')
-_LOG_GLOB = os.path.join(_LOG_DIR, 'model_responses_*.txt')
+import project_context
+
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BLOCK_RE = re.compile(r'^=== (Prompt|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)',
                        re.DOTALL | re.MULTILINE)
 _SUMMARY_RE = re.compile(r'<summary>\s*(.*?)\s*</summary>', re.DOTALL)
+
+
+def _log_dir():
+    return project_context.get_model_responses_dir(_BASE_DIR)
+
+
+def _log_globs():
+    return project_context.get_model_response_globs(_BASE_DIR)
 
 def _rel_time(mtime):
     d = int(time.time() - mtime)
@@ -81,7 +89,10 @@ def _parse_native_history(pairs):
 
 def list_sessions(exclude_pid=None):
     """Newest-first list of (path, mtime, first_user_text, n_rounds)."""
-    files = glob.glob(_LOG_GLOB)
+    files = []
+    for pattern in _log_globs():
+        files.extend(glob.glob(pattern))
+    files = sorted(set(files))
     if exclude_pid is not None:
         tag = f'model_responses_{exclude_pid}.txt'
         files = [f for f in files if not f.endswith(tag)]
@@ -118,8 +129,7 @@ def _replace_backend_history(agent, history):
 
 
 def _current_log_path(pid=None):
-    pid = os.getpid() if pid is None else pid
-    return os.path.join(_LOG_DIR, f'model_responses_{pid}.txt')
+    return project_context.get_model_response_log_path(pid=pid, base_dir=_BASE_DIR)
 
 
 def _snapshot_current_log(pid=None):
@@ -134,10 +144,10 @@ def _snapshot_current_log(pid=None):
         return None
     if not _pairs(content):
         return None
-    os.makedirs(_LOG_DIR, exist_ok=True)
+    os.makedirs(_log_dir(), exist_ok=True)
     pid = os.getpid() if pid is None else pid
     stamp = time.strftime('%Y%m%d_%H%M%S')
-    snapshot = os.path.join(_LOG_DIR, f'model_responses_snapshot_{pid}_{stamp}_{time.time_ns() % 1_000_000_000:09d}.txt')
+    snapshot = os.path.join(_log_dir(), f'model_responses_snapshot_{pid}_{stamp}_{time.time_ns() % 1_000_000_000:09d}.txt')
     with open(snapshot, 'w', encoding='utf-8', errors='replace') as fh:
         fh.write(content)
     with open(path, 'w', encoding='utf-8', errors='replace'):

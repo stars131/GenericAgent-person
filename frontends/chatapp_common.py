@@ -1,5 +1,7 @@
 import ast, asyncio, glob, json, os, queue as Q, re, socket, sys, time
 
+import project_context
+
 HELP_COMMANDS = (
     ("/help", "显示帮助"),
     ("/status", "查看状态"),
@@ -30,10 +32,6 @@ HELP_TEXT = build_help_text()
 FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
 TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RESTORE_GLOBS = (
-    os.path.join(PROJECT_ROOT, "temp", "model_responses", "model_responses_*.txt"),
-    os.path.join(PROJECT_ROOT, "temp", "model_responses_*.txt"),
-)
 RESTORE_BLOCK_RE = re.compile(
     r"^=== (Prompt|Response) ===.*?\n(.*?)(?=^=== (?:Prompt|Response) ===|\Z)",
     re.DOTALL | re.MULTILINE,
@@ -69,7 +67,7 @@ def split_text(text, limit):
 
 def _restore_log_files():
     files = []
-    for pattern in RESTORE_GLOBS:
+    for pattern in project_context.get_model_response_globs(PROJECT_ROOT):
         files.extend(glob.glob(pattern))
     return sorted(set(files))
 

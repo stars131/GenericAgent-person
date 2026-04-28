@@ -38,3 +38,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = []
+
+[tool.pytest.ini_options]
+addopts = "-p no:cacheprovider"
+testpaths = ["tests"]
+cache_dir = "temp/.pytest_cache"
+norecursedirs = [".git", ".venv", ".deps", "pytest-cache-files-*"]

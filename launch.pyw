@@ -1,144 +1,185 @@
-import webview, threading, subprocess, sys, time, os, ctypes, atexit, socket, random
+import argparse
+import atexit
+import ctypes
+import importlib.util
+import os
+import random
+import runpy
+import socket
+import subprocess
+import sys
 
-WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 600, 900, 0, 100
+import webview
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from launcher.project_manager import ProjectManager
+from launcher.shell_server import serve as serve_shell
+
+WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 820, 900, 0, 100
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-def find_free_port(lo=18501, hi=18599):
-    ports = list(range(lo, hi+1)); random.shuffle(ports)
-    for p in ports:
-        try: s = socket.socket(); s.bind(('127.0.0.1', p)); s.close(); return p
-        except OSError: continue
-    raise RuntimeError(f'No free port in {lo}-{hi}')
+LAUNCHER_LOCK_PORT = 19736  # singleton lock for the local-UI launcher
+
+window = None
+pm = None
+
+
+def find_free_port(lo=18400, hi=18499):
+    """Free port for the shell HTTP server (separate range from project streamlits)."""
+    ports = list(range(lo, hi + 1)); random.shuffle(ports)
+    for port in ports:
+        try:
+            sock = socket.socket(); sock.bind(("127.0.0.1", port)); sock.close()
+            return port
+        except OSError:
+            continue
+    raise RuntimeError(f"No free port in {lo}-{hi}")
+
 
 def get_screen_width():
     try: return ctypes.windll.user32.GetSystemMetrics(0)
-    except: return 1920
+    except Exception: return 1920
 
-def start_streamlit(port):
-    global proc
-    cmd = [sys.executable, "-m", "streamlit", "run", os.path.join(frontends_dir, "stapp.py"), "--server.port", str(port), "--server.address", "localhost", "--server.headless", "true"]
-    proc = subprocess.Popen(cmd)
-    atexit.register(proc.kill)
 
-def inject(text):
-    window.evaluate_js(f"""
-        const textarea = document.querySelector('textarea[data-testid="stChatInputTextArea"]');
-        if (textarea) {{
-            // 1. 用原生 setter 设置值（绕过 React）
-            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-            nativeTextAreaValueSetter.call(textarea, {repr(text)});
-            // 2. 触发 React 的 input 事件
-            textarea.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            // 3. 触发 change 事件（有些组件需要）
-            textarea.dispatchEvent(new Event('change', {{ bubbles: true }}));
-            // 4. 延迟提交
-            setTimeout(() => {{
-                const btn = document.querySelector('[data-testid="stChatInputSubmitButton"]');
-                if (btn) {{btn.click();console.log('Submitted:', {repr(text)});}}
-            }}, 200);
-        }}""")
+def acquire_singleton():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try: s.bind(("127.0.0.1", LAUNCHER_LOCK_PORT)); s.listen(1); return s
+    except OSError: return None
 
-def get_last_reply_time():
-    last = window.evaluate_js("""
-        const el = document.getElementById('last-reply-time');
-        el ? parseInt(el.textContent) : 0;
-    """) or 0
-    return last or int(time.time())
 
-PASTE_HOOK_JS = """if (!window._pasteHooked) { window._pasteHooked = true;
-    document.addEventListener('paste', e => {
-        const items = e.clipboardData?.items; if (!items) return;
-        let t = null;
-        for (const item of items) { if (item.kind === 'file') { t = item.type.startsWith('image/') ? 'image in clipboard, ' : 'file in clipboard, '; break; } }
-        if (!t) return;
-        e.preventDefault(); e.stopImmediatePropagation();
-        const el = document.querySelector('textarea[data-testid="stChatInputTextArea"]') || document.activeElement;
-        if (el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT')) {
-            const s = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-            s.call(el, el.value + t); el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    }, true);
-}"""
+def get_feishu_startup_status():
+    keys = {}
+    for name in ("mykey.py", "mykey_local_override.py"):
+        path = os.path.join(script_dir, name)
+        if not os.path.exists(path): continue
+        try: values = runpy.run_path(path)
+        except Exception as exc: return False, f"config load failed: {name}: {exc}"
+        keys.update({k: v for k, v in values.items() if not k.startswith("_")})
+    app_id = str(keys.get("fs_app_id", "") or "").strip()
+    app_secret = str(keys.get("fs_app_secret", "") or "").strip()
+    if not app_id or not app_secret: return False, "fs_app_id/fs_app_secret not configured"
+    if importlib.util.find_spec("lark_oapi") is None: return False, "lark_oapi not installed"
+    return True, "configured"
 
-def idle_monitor():
-    last_trigger_time = 0
-    while True:
-        time.sleep(5)
-        try:
-            window.evaluate_js(PASTE_HOOK_JS)
-            now = time.time()
-            if now - last_trigger_time < 120: continue
-            last_reply = get_last_reply_time()
-            if now - last_reply > 1800:
-                print('[Idle Monitor] Detected idle state, injecting task...')
-                inject("[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。")
-                last_trigger_time = now
-        except Exception as e:
-            print(f'[Idle Monitor] Error: {e}')
 
-if __name__ == '__main__':
-    import argparse
+def spawn_background(script_name):
+    process = subprocess.Popen(
+        [sys.executable, os.path.join(frontends_dir, script_name)],
+        creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    atexit.register(process.kill)
+    return process
+
+
+def on_closing():
+    """Called when the user clicks the close button."""
+    if pm is None: return True
+    running = [p for p in pm.list()["projects"] if p["running"]]
+    if not running:
+        return True
+    msg = (f"有 {len(running)} 个项目正在后台运行：\n  "
+           + "\n  ".join(p["name"] for p in running)
+           + "\n\n确定 → 保留后台继续运行\n取消 → 全部停止后退出")
+    keep = False
+    try:
+        keep = bool(window.evaluate_js(f"confirm({repr(msg)})"))
+    except Exception as e:
+        print(f"[Launch] close-confirm dialog failed, defaulting to keep: {e}")
+        keep = True
+    if keep:
+        pm.detach_all()
+        print(f"[Launch] {len(running)} project(s) detached, still running in background")
+    else:
+        pm.shutdown_all()
+        print("[Launch] all projects stopped")
+    return True
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('port', nargs='?', default='0'); 
-    parser.add_argument('--tg', action='store_true', help='启动 Telegram Bot'); 
-    parser.add_argument('--qq', action='store_true', help='启动 QQ Bot');
-    parser.add_argument('--feishu', '--fs', dest='feishu', action='store_true', help='启动 Feishu Bot');
-    parser.add_argument('--wecom', action='store_true', help='启动 WeCom Bot');
-    parser.add_argument('--dingtalk', '--dt', dest='dingtalk', action='store_true', help='启动 DingTalk Bot');
-    parser.add_argument('--sched', action='store_true', help='启动计划任务调度器')
-    parser.add_argument('--llm_no', type=int, default=0, help='LLM编号')
+    parser.add_argument("port", nargs="?", default="0", help="(legacy, ignored)")
+    parser.add_argument("--tg", action="store_true", help="Start Telegram bot")
+    parser.add_argument("--qq", action="store_true", help="Start QQ bot")
+    parser.set_defaults(feishu=False)
+    parser.add_argument("--feishu", "--fs", dest="feishu", action="store_true", help="Start Feishu bot")
+    parser.add_argument("--no-feishu", dest="feishu", action="store_false", help="Do not start Feishu bot")
+    parser.add_argument("--wecom", action="store_true", help="Start WeCom bot")
+    parser.add_argument("--dingtalk", "--dt", dest="dingtalk", action="store_true", help="Start DingTalk bot")
+    parser.add_argument("--sched", action="store_true", help="Start task scheduler")
+    parser.add_argument("--llm_no", type=int, default=0, help="LLM index")
     args = parser.parse_args()
-    port = str(find_free_port()) if args.port == '0' else args.port
-    print(f'[Launch] Using port {port}')
-    threading.Thread(target=start_streamlit, args=(port,), daemon=True).start()
 
-    if args.tg:
-        tgproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "tgapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        atexit.register(tgproc.kill)
-        print('[Launch] Telegram Bot started')
-    else: print('[Launch] Telegram Bot not enabled (use --tg to start)')
+    lock = acquire_singleton()
+    if lock is None:
+        print("[Launch] Another launcher is already running.")
+        sys.exit(0)
 
-    if args.qq:
-        qqproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "qqapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        atexit.register(qqproc.kill)
-        print('[Launch] QQ Bot started')
-    else: print('[Launch] QQ Bot not enabled (use --qq to start)')
+    pm = ProjectManager(script_dir)
 
-    if args.feishu:
-        fsproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "fsapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        atexit.register(fsproc.kill)
-        print('[Launch] Feishu Bot started')
-    else: print('[Launch] Feishu Bot not enabled (use --feishu to start)')
+    # Bootstrap: create a default project on first run
+    if not pm.projects:
+        print("[Launch] First run — creating default project")
+        active = pm.create("默认对话", auto_start=False)
+        try:
+            pm.start(active["id"])
+        except Exception as exc:
+            print(f"[Launch] {exc}")
+    else:
+        # Reattach: any project whose pid+port still alive stays "running" automatically
+        # (ProjectManager.is_running checks both). Auto-start the last active project
+        # if it's not currently running.
+        active = next((p for p in pm.projects if p["id"] == pm.active_id), None) or pm.projects[0]
+        if not pm.is_running(active):
+            print(f"[Launch] Auto-starting last active project: {active['name']}")
+            try:
+                pm.start(active["id"])
+            except Exception as exc:
+                print(f"[Launch] {exc}")
 
-    if args.wecom:
-        wcproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "wecomapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        atexit.register(wcproc.kill)
-        print('[Launch] WeCom Bot started')
-    else: print('[Launch] WeCom Bot not enabled (use --wecom to start)')
+    shell_port = find_free_port()
+    serve_shell(pm, shell_port)
+    print(f"[Launch] Shell on http://127.0.0.1:{shell_port}/")
 
-    if args.dingtalk:
-        dtproc = subprocess.Popen([sys.executable, os.path.join(frontends_dir, "dingtalkapp.py")], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-        atexit.register(dtproc.kill)
-        print('[Launch] DingTalk Bot started')
-    else: print('[Launch] DingTalk Bot not enabled (use --dingtalk to start)')
-    
+    # Bots — kept tied to launcher lifetime (atexit kill), orthogonal to local projects
+    if args.tg: spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
+    if args.qq: spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
+
+    feishu_ready, feishu_reason = get_feishu_startup_status()
+    if args.feishu and feishu_ready:
+        spawn_background("fsapp.py"); print("[Launch] Feishu Bot started")
+    elif args.feishu:
+        print(f"[Launch] Feishu Bot requested but not started: {feishu_reason}")
+    else:
+        print("[Launch] Feishu Bot not enabled (use --feishu to start)")
+
+    if args.wecom: spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
+    if args.dingtalk: spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
+
     if args.sched:
-        scheduler_proc = subprocess.Popen([sys.executable, os.path.join(script_dir, "agentmain.py"), "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"), "--llm_no", str(args.llm_no)], creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        scheduler_proc = subprocess.Popen(
+            [sys.executable, os.path.join(script_dir, "agentmain.py"),
+             "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"),
+             "--llm_no", str(args.llm_no)],
+            creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
         atexit.register(scheduler_proc.kill)
-        print('[Launch] Task Scheduler started (duplicate prevented by scheduler port lock)')
-    else: print('[Launch] Task Scheduler not enabled (--sched)')
+        print("[Launch] Task Scheduler started")
 
-    monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
-    monitor_thread.start()
-    if os.name == 'nt':
+    if os.name == "nt":
         screen_width = get_screen_width()
         x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
-    else: x_pos = 100
-    time.sleep(2) 
+    else:
+        x_pos = 100
+
     window = webview.create_window(
-        title='GenericAgent', url=f'http://localhost:{port}',
-        width=WINDOW_WIDTH, height=WINDOW_HEIGHT, x=x_pos, y=TOP_PADDING,
-        resizable=True, text_select=True)
+        title="GenericAgent",
+        url=f"http://127.0.0.1:{shell_port}/",
+        width=WINDOW_WIDTH, height=WINDOW_HEIGHT,
+        x=x_pos, y=TOP_PADDING,
+        resizable=True, text_select=True,
+    )
+    window.events.closing += on_closing
     webview.start()

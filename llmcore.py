@@ -1,25 +1,51 @@
 import os, json, re, time, requests, sys, threading, urllib3, base64, importlib, uuid
 from datetime import datetime
+from project_context import get_model_responses_dir
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _RESP_CACHE_KEY = str(uuid.uuid4())
 
+def _candidate_mykey_paths():
+    root = os.path.dirname(os.path.abspath(__file__))
+    return [os.path.join(root, name) for name in ("mykey.py", "mykey_local_override.py", "mykey.json")]
+
+def _candidate_mykey_signature():
+    sig = []
+    for path in _candidate_mykey_paths():
+        if os.path.exists(path):
+            st = os.stat(path)
+            sig.append((os.path.basename(path), st.st_mtime_ns, st.st_size))
+        else:
+            sig.append((os.path.basename(path), None, None))
+    return tuple(sig)
+
 def _load_mykeys():
-    global _mykey_path
+    global _mykey_paths
     try:
-        import mykey; importlib.reload(mykey); _mykey_path = mykey.__file__
-        return {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
+        import mykey; importlib.reload(mykey)
+        mk = {k: v for k, v in vars(mykey).items() if not k.startswith('_')}
+        _mykey_paths = [os.path.abspath(mykey.__file__)]
+        try:
+            import mykey_local_override
+            importlib.reload(mykey_local_override)
+            mk.update({k: v for k, v in vars(mykey_local_override).items() if not k.startswith('_')})
+            _mykey_paths.append(os.path.abspath(mykey_local_override.__file__))
+        except ImportError:
+            pass
+        return mk
     except ImportError: pass
-    _mykey_path = p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mykey.json')
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mykey.json')
     if not os.path.exists(p): raise Exception('[ERROR] mykey.py or mykey.json not found, please create one from mykey_template.')
+    _mykey_paths = [p]
     with open(p, encoding='utf-8') as f: return json.load(f)
 
-_mykey_path = _mykey_mtime = None
+_mykey_paths = []
+_mykey_signature = None
 def reload_mykeys():
-    global _mykey_mtime
-    mt = os.stat(_mykey_path).st_mtime_ns if _mykey_path else -1
-    if mt == _mykey_mtime: return globals().get('mykeys', {}), False
-    mk = _load_mykeys(); _mykey_mtime = os.stat(_mykey_path).st_mtime_ns
-    print(f'[Info] Load mykeys from {_mykey_path}')
+    global _mykey_signature
+    sig = _candidate_mykey_signature()
+    if sig == _mykey_signature: return globals().get('mykeys', {}), False
+    mk = _load_mykeys(); _mykey_signature = _candidate_mykey_signature()
+    print(f'[Info] Load mykeys from {", ".join(_mykey_paths)}')
     globals().update(mykeys=mk)
     if mk.get('langfuse_config'):
         try: from plugins import langfuse_tracing
@@ -45,8 +71,10 @@ def compress_history_tags(messages, keep_recent=10, max_len=800, force=False):
         return text
     for i, msg in enumerate(messages):
         if i >= len(messages) - keep_recent: break
-        c = msg['content']
-        if isinstance(c, str): msg['content'] = _trunc(c)
+        key = 'content' if 'content' in msg else ('prompt' if 'prompt' in msg else None)
+        if key is None: continue
+        c = msg[key]
+        if isinstance(c, str): msg[key] = _trunc(c)
         elif isinstance(c, list):
             for b in c:
                 if not isinstance(b, dict): continue
@@ -349,6 +377,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
     ml = model.lower()
     if 'kimi' in ml or 'moonshot' in ml: temperature = 1
     elif 'minimax' in ml: temperature = max(0.01, min(temperature, 1.0))  # MiniMax requires temp in (0, 1]
+    force_temperature = any(k in ml for k in ('kimi', 'moonshot', 'minimax'))
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "text/event-stream"}
     if api_mode == "responses":
         url = auto_make_url(api_base, "responses")
@@ -362,7 +391,7 @@ def _openai_stream(api_base, api_key, messages, model, api_mode='chat_completion
         _stamp_oai_cache_markers(messages, model)
         payload = {"model": model, "messages": messages, "stream": stream}
         if stream: payload["stream_options"] = {"include_usage": True}
-        if temperature != 1: payload["temperature"] = temperature
+        if force_temperature or temperature != 1: payload["temperature"] = temperature
         if max_tokens: payload["max_completion_tokens" if ml.startswith(("gpt-5", "o1", "o2", "o3", "o4")) else "max_tokens"] = max_tokens
         if reasoning_effort: payload["reasoning_effort"] = reasoning_effort
     if tools: payload["tools"] = _prepare_oai_tools(tools, api_mode)
@@ -520,6 +549,7 @@ class BaseSession:
         self.thinking_budget_tokens = cfg.get('thinking_budget_tokens')
         mode = str(cfg.get('api_mode', 'chat_completions')).strip().lower().replace('-', '_')
         self.api_mode = 'responses' if mode in ('responses', 'response') else 'chat_completions'
+        self.disable_response_storage = bool(cfg.get('disable_response_storage', False))
         self.temperature = cfg.get('temperature', 1)
         self.max_tokens = cfg.get('max_tokens')
     def _apply_claude_thinking(self, payload):
@@ -583,11 +613,25 @@ class ClaudeSession(BaseSession):
         return msgs
 
 class LLMSession(BaseSession):
-    def raw_ask(self, messages):
-        return (yield from _openai_stream(self.api_base, self.api_key, messages, self.model, self.api_mode,
-                                  temperature=self.temperature, reasoning_effort=self.reasoning_effort,
-                                  max_tokens=self.max_tokens, max_retries=self.max_retries, stream=self.stream,
-                                  connect_timeout=self.connect_timeout, read_timeout=self.read_timeout, proxies=self.proxies))
+    def raw_ask(self, messages, model=None, api_mode=None, system=None, temperature=None, max_tokens=None,
+                tools=None, reasoning_effort=None, stream=None):
+        return (yield from _openai_stream(
+            self.api_base,
+            self.api_key,
+            messages,
+            model or self.model,
+            self.api_mode if api_mode is None else api_mode,
+            system=self.system if system is None else system,
+            temperature=self.temperature if temperature is None else temperature,
+            reasoning_effort=self.reasoning_effort if reasoning_effort is None else reasoning_effort,
+            max_tokens=self.max_tokens if max_tokens is None else max_tokens,
+            tools=tools,
+            max_retries=self.max_retries,
+            stream=self.stream if stream is None else stream,
+            connect_timeout=self.connect_timeout,
+            read_timeout=self.read_timeout,
+            proxies=self.proxies,
+        ))
     def make_messages(self, raw_list): return _msgs_claude2oai(raw_list)
 
 def _fix_messages(messages):
@@ -688,13 +732,26 @@ class NativeClaudeSession(BaseSession):
         return MockResponse(thinking, content, tool_calls, str(content_blocks))
 
 class NativeOAISession(NativeClaudeSession):
-    def raw_ask(self, messages):
+    def raw_ask(self, messages, model=None, api_mode=None, system=None, temperature=None, max_tokens=None,
+                tools=None, reasoning_effort=None, stream=None):
         messages = _fix_messages(messages)
-        return (yield from _openai_stream(self.api_base, self.api_key, _msgs_claude2oai(messages), self.model, self.api_mode,
-                                          system=self.system, temperature=self.temperature, max_tokens=self.max_tokens,
-                                          tools=self.tools, reasoning_effort=self.reasoning_effort,
-                                          max_retries=self.max_retries, connect_timeout=self.connect_timeout,
-                                          read_timeout=self.read_timeout, proxies=self.proxies, stream=self.stream))
+        return (yield from _openai_stream(
+            self.api_base,
+            self.api_key,
+            _msgs_claude2oai(messages),
+            model or self.model,
+            self.api_mode if api_mode is None else api_mode,
+            system=self.system if system is None else system,
+            temperature=self.temperature if temperature is None else temperature,
+            max_tokens=self.max_tokens if max_tokens is None else max_tokens,
+            tools=self.tools if tools is None else tools,
+            reasoning_effort=self.reasoning_effort if reasoning_effort is None else reasoning_effort,
+            max_retries=self.max_retries,
+            connect_timeout=self.connect_timeout,
+            read_timeout=self.read_timeout,
+            proxies=self.proxies,
+            stream=self.stream if stream is None else stream,
+        ))
 
 def openai_tools_to_claude(tools):
     """[{type:'function', function:{name,description,parameters}}] → [{name,description,input_schema}]."""
@@ -736,14 +793,14 @@ class ToolClient:
         print("Full prompt length:", len(full_prompt), 'chars')
         prompt_log = full_prompt
         gen = self.backend.ask(full_prompt, stream=True)
-        _write_llm_log('Prompt', prompt_log)
+        _write_llm_log_if_enabled(self.backend, 'Prompt', prompt_log)
         raw_text = ''; summarytag = '[NextWillSummary]'
         for chunk in gen:
             raw_text += chunk
             if chunk != summarytag: yield chunk
         if raw_text.endswith(summarytag):
             self.last_tools = ''; raw_text = raw_text[:-len(summarytag)]
-        _write_llm_log('Response', raw_text)
+        _write_llm_log_if_enabled(self.backend, 'Response', raw_text)
         return self._parse_mixed_response(raw_text)
 
     def _estimate_content_len(self, content):
@@ -878,12 +935,16 @@ def _parse_text_tool_calls(content):
     return tcs, content
 
 def _write_llm_log(label, content):
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp/model_responses')
+    log_dir = get_model_responses_dir(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f'model_responses_{os.getpid()}.txt')
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(log_path, 'a', encoding='utf-8', errors='replace') as f:
         f.write(f"=== {label} === {ts}\n{content}\n\n")
+
+def _write_llm_log_if_enabled(backend, label, content):
+    if getattr(backend, 'disable_response_storage', False): return
+    _write_llm_log(label, content)
 
 def tryparse(json_str):
     try: return json.loads(json_str)
@@ -996,13 +1057,19 @@ class NativeToolClient:
             if tid not in tr_id_set: tool_result_blocks.append({"type": "tool_result", "tool_use_id": tid, "content": ""})
         self._pending_tool_ids = []
         merged = {"role": "user", "content": tool_result_blocks + combined_content}
-        _write_llm_log('Prompt', json.dumps(merged, ensure_ascii=False, indent=2))
+        _write_llm_log_if_enabled(self.backend, 'Prompt', json.dumps(merged, ensure_ascii=False, indent=2))
         gen = self.backend.ask(merged)
         try:
             while True: 
                 chunk = next(gen); yield chunk
         except StopIteration as e: resp = e.value
-        if resp: _write_llm_log('Response', resp.raw)
+        if resp and not getattr(resp, 'thinking', '') and isinstance(getattr(resp, 'content', None), str):
+            think_pattern = r"<think(?:ing)?>(.*?)</think(?:ing)?>"
+            think_match = re.search(think_pattern, resp.content, re.DOTALL)
+            if think_match:
+                resp.thinking = think_match.group(1).strip()
+                resp.content = re.sub(think_pattern, "", resp.content, flags=re.DOTALL).strip()
+        if resp: _write_llm_log_if_enabled(self.backend, 'Response', resp.raw)
         if resp and hasattr(resp, 'tool_calls') and resp.tool_calls: self._pending_tool_ids = [tc.id for tc in resp.tool_calls]
         return resp
 

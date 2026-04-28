@@ -1,5 +1,8 @@
 temp/
 tmp/
+.tmp/
+.deps/
+.pip-cache/
 
 __pycache__/
 *.py[cod]
@@ -15,6 +18,7 @@ dist/
 
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 
@@ -28,6 +32,7 @@ model_responses.txt
 
 # Sensitive files (API keys, credentials)
 mykey.py
+mykey_local_override.py
 
 tasks/
 

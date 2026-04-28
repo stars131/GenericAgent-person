@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-cn">
+<head>
+<meta charset="utf-8">
+<title>GenericAgent</title>
+<style>
+  :root {
+    --bg: #1e1e1e;
+    --fg: #d4d4d4;
+    --muted: #888;
+    --accent: #4ea1ff;
+    --row: #2a2a2a;
+    --row-hover: #353535;
+    --row-active: #0d3a66;
+    --border: #333;
+    --green: #3fb950;
+    --gray: #6e7681;
+    --red: #d04040;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    overflow: hidden;
+  }
+  #sidebar {
+    width: 240px;
+    background: #252526;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  #header {
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #header button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  #header button:hover { background: #6cb1ff; }
+  #list { flex: 1; overflow-y: auto; padding: 4px; }
+  .row {
+    padding: 7px 8px;
+    margin: 2px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    background: var(--row);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .row:hover { background: var(--row-hover); }
+  .row.active { background: var(--row-active); }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--gray);
+  }
+  .dot.running { background: var(--green); }
+  .dot.error { background: var(--red); }
+  .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .actions { display: none; gap: 4px; }
+  .row:hover .actions { display: flex; }
+  .actions button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 13px;
+  }
+  .actions button:hover { color: var(--fg); }
+  #footer {
+    border-top: 1px solid var(--border);
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  #content { flex: 1; position: relative; }
+  iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+  }
+  iframe.hidden { display: none; }
+  #empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--muted);
+    font-size: 14px;
+    text-align: center;
+    white-space: pre-wrap;
+  }
+  #toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    max-width: min(720px, calc(100vw - 40px));
+    white-space: pre-wrap;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <div id="header">
+    <span>项目</span>
+    <button id="btn-new" title="新建对话">+ 新建</button>
+  </div>
+  <div id="list"></div>
+  <div id="footer">关闭窗口时可选择保留后台运行</div>
+</div>
+<div id="content">
+  <div id="empty">点击左侧项目开始</div>
+</div>
+<div id="toast"></div>
+
+<script>
+const LIST = document.getElementById("list");
+const CONTENT = document.getElementById("content");
+const EMPTY = document.getElementById("empty");
+const TOAST = document.getElementById("toast");
+
+const iframes = {};
+let state = { projects: [], active_id: null };
+
+function toast(msg) {
+  TOAST.textContent = msg;
+  TOAST.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => TOAST.classList.remove("show"), 2400);
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = "请求失败";
+    try { msg = (await r.json()).error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+async function refresh() {
+  try {
+    state = await api("GET", "/api/projects");
+    render();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function activeProject() {
+  return state.projects.find(p => p.id === state.active_id) || null;
+}
+
+function emptyMessage() {
+  const project = activeProject();
+  if (!project) return "点击左侧项目开始";
+  if (project.running && iframes[project.id]) return "";
+  if (project.last_error) return `启动失败\n\n${project.last_error}`;
+  return "项目未运行";
+}
+
+function render() {
+  LIST.innerHTML = "";
+  for (const p of state.projects) {
+    const row = document.createElement("div");
+    const hasError = !p.running && !!p.last_error;
+    row.className = "row" + (p.id === state.active_id ? " active" : "");
+    row.title = p.last_error || p.name;
+    row.innerHTML = `
+      <span class="dot ${p.running ? "running" : hasError ? "error" : ""}" title="${escape(p.last_error || (p.running ? "运行中" : "已停止"))}"></span>
+      <span class="name" title="${escape(p.name)}">${escape(p.name)}</span>
+      <span class="actions">
+        ${p.running ? '<button data-act="stop" title="停止">⏹</button>'
+                    : '<button data-act="start" title="启动">▶</button>'}
+        <button data-act="rename" title="重命名">✎</button>
+        <button data-act="delete" title="删除">🗑</button>
+      </span>`;
+    row.addEventListener("click", (e) => {
+      const act = e.target.dataset.act;
+      if (act) {
+        e.stopPropagation();
+        handle(act, p);
+      } else {
+        activate(p.id);
+      }
+    });
+    LIST.appendChild(row);
+  }
+  syncIframes();
+}
+
+function syncIframes() {
+  const ids = new Set(state.projects.map(p => p.id));
+  for (const id in iframes) {
+    if (!ids.has(id)) {
+      iframes[id].remove();
+      delete iframes[id];
+    }
+  }
+  for (const p of state.projects) {
+    if (!iframes[p.id] && p.running && p.port) {
+      const fr = document.createElement("iframe");
+      fr.src = `http://127.0.0.1:${p.port}`;
+      fr.className = p.id === state.active_id ? "" : "hidden";
+      CONTENT.appendChild(fr);
+      iframes[p.id] = fr;
+    }
+    if (iframes[p.id]) {
+      iframes[p.id].className = p.id === state.active_id ? "" : "hidden";
+    }
+  }
+  const msg = emptyMessage();
+  EMPTY.textContent = msg;
+  EMPTY.style.display = msg ? "" : "none";
+}
+
+async function activate(id) {
+  if (state.active_id === id) return;
+  state.active_id = id;
+  try {
+    await api("POST", `/api/projects/${id}/activate`);
+  } catch (e) {
+    console.error(e);
+  }
+  render();
+}
+
+async function handle(act, p) {
+  try {
+    if (act === "start") {
+      const result = await api("POST", `/api/projects/${p.id}/start`);
+      if (result && result.project && result.project.last_error) toast(result.project.last_error);
+      else toast("启动中…");
+    } else if (act === "stop") {
+      if (!confirm(`停止「${p.name}」？后台进程将退出。`)) return;
+      await api("POST", `/api/projects/${p.id}/stop`);
+      toast("已停止");
+    } else if (act === "rename") {
+      const name = prompt("新名字：", p.name);
+      if (!name) return;
+      await api("POST", `/api/projects/${p.id}/rename`, { name });
+    } else if (act === "delete") {
+      if (!confirm(`删除「${p.name}」？项目元数据会移除，历史日志会保留在 temp/model_responses/${p.id}/。`)) return;
+      await api("DELETE", `/api/projects/${p.id}`);
+      toast("已删除");
+    }
+    await refresh();
+  } catch (e) {
+    toast(e.message || String(e));
+    await refresh();
+  }
+}
+
+document.getElementById("btn-new").addEventListener("click", async () => {
+  const name = prompt("项目名：", "新对话");
+  if (!name) return;
+  try {
+    const result = await api("POST", "/api/projects", { name });
+    const project = result.project || result;
+    state.active_id = project && project.id ? project.id : state.active_id;
+    await refresh();
+    toast(result.warning || "已创建");
+  } catch (e) {
+    toast(e.message || String(e));
+    await refresh();
+  }
+});
+
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

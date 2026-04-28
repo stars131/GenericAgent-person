@@ -30,7 +30,9 @@ def init():
 
 agent = init()
 
-st.title("🖥️ Cowork")
+_proj_name = os.environ.get("GA_PROJECT_NAME", "").strip()
+_proj_id = os.environ.get("GA_PROJECT_ID", "").strip() or "default"
+st.title(f"🖥️ Cowork · {_proj_name}" if _proj_name else "🖥️ Cowork")
 
 if 'autonomous_enabled' not in st.session_state: st.session_state.autonomous_enabled = False
 
@@ -179,7 +181,54 @@ _js_ime_fix = ("" if os.name == 'nt' else
     "e.key==='Enter'&&!e.shiftKey&&(e.isComposing||c||e.keyCode===229)&&"
     "(e.stopImmediatePropagation(),e.preventDefault())},!0))})}"
     "f();new MutationObserver(f).observe(d.body,{childList:1,subtree:1})}()")
-_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix}</script>', height=0)
+_js_paste_hook = (
+    "!function(){var p=window.parent,d=p.document;if(p.__gaPasteHook)return;p.__gaPasteHook=1;"
+    "d.addEventListener('paste',function(e){"
+    "var items=e.clipboardData&&e.clipboardData.items;if(!items)return;"
+    "var tag='';for(var i=0;i<items.length;i++){var item=items[i];"
+    "if(item.kind==='file'){tag=item.type&&item.type.indexOf('image/')===0?'image in clipboard, ':'file in clipboard, ';break;}}"
+    "if(!tag)return;e.preventDefault();e.stopImmediatePropagation();"
+    "var el=d.querySelector('textarea[data-testid=\"stChatInputTextArea\"]')||d.activeElement;"
+    "if(!el||!(el.tagName==='TEXTAREA'||el.tagName==='INPUT'))return;"
+    "var proto=el.tagName==='TEXTAREA'?p.HTMLTextAreaElement.prototype:p.HTMLInputElement.prototype;"
+    "var setter=Object.getOwnPropertyDescriptor(proto,'value');"
+    "if(!setter||!setter.set)return;setter.set.call(el,(el.value||'')+tag);"
+    "el.dispatchEvent(new Event('input',{bubbles:true}));"
+    "el.dispatchEvent(new Event('change',{bubbles:true}));"
+    "},true)}()"
+)
+_js_idle_autonomy = (
+    f"!function(){{var p=window.parent,d=p.document,key={json.dumps(_proj_id)};"
+    "p.__gaIdleMonitors=p.__gaIdleMonitors||{};"
+    "var state=p.__gaIdleMonitors[key]||(p.__gaIdleMonitors[key]={timer:0,lastTrigger:0});"
+    "if(state.timer){clearInterval(state.timer);state.timer=0;}"
+    "function inject(text){"
+    "var textarea=d.querySelector('textarea[data-testid=\"stChatInputTextArea\"]');"
+    "if(!textarea)return;"
+    "var desc=Object.getOwnPropertyDescriptor(p.HTMLTextAreaElement.prototype,'value');"
+    "if(!desc||!desc.set)return;desc.set.call(textarea,text);"
+    "textarea.dispatchEvent(new Event('input',{bubbles:true}));"
+    "textarea.dispatchEvent(new Event('change',{bubbles:true}));"
+    "setTimeout(function(){"
+    "var btn=d.querySelector('[data-testid=\"stChatInputSubmitButton\"]');"
+    "if(btn&&!btn.disabled)btn.click();"
+    "},200);"
+    "}"
+    "function check(){"
+    "var el=d.getElementById('last-reply-time');"
+    "if(!el||el.dataset.autonomous!=='1')return;"
+    "var now=Math.floor(Date.now()/1000);"
+    "var last=parseInt(el.textContent||'0',10)||now;"
+    "if(now-state.lastTrigger<120)return;"
+    "if(now-last<=1800)return;"
+    "state.lastTrigger=now;"
+    "inject('[AUTO]🤖 用户已经离开超过30分钟，作为自主智能体，请阅读自动化sop，执行自动任务。');"
+    "}"
+    "var el=d.getElementById('last-reply-time');"
+    "if(el&&el.dataset.autonomous==='1'){state.timer=setInterval(check,5000);check();}"
+    "}()"
+)
+_embed_html(f'<script>{_js_scroll_fix};{_js_ime_fix};{_js_paste_hook};{_js_idle_autonomy}</script>', height=0)
 
 if prompt := st.chat_input("any task?"):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -232,5 +281,7 @@ if prompt := st.chat_input("any task?"):
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.session_state.last_reply_time = int(time.time())
 
-if st.session_state.autonomous_enabled:
-    st.markdown(f"""<div id="last-reply-time" style="display:none">{st.session_state.get('last_reply_time', int(time.time()))}</div>""", unsafe_allow_html=True)
+st.markdown(
+    f"""<div id="last-reply-time" data-autonomous="{1 if st.session_state.autonomous_enabled else 0}" style="display:none">{st.session_state.get('last_reply_time', int(time.time()))}</div>""",
+    unsafe_allow_html=True,
+)
