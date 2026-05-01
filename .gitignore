@@ -4,6 +4,17 @@ tmp/
 .deps/
 .pip-cache/
 
+# GUI (Tauri + React) build artefacts
+gui/node_modules/
+gui/dist/
+gui/dist-ssr/
+gui/coverage/
+gui/playwright-report/
+gui/test-results/
+gui/src-tauri/target/
+gui/src-tauri/Cargo.lock
+node_modules/
+
 __pycache__/
 *.py[cod]
 *$py.class

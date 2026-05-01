@@ -71,6 +71,14 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 ## 🚀 Quick Start
 
+> **Coming next**: a unified Tauri + React desktop GUI is under construction
+> in [`gui/`](./gui/). Phase 0 (scaffolding + enterprise standards) has
+> landed; feature work follows in Phase 1+. See
+> [`docs/architecture/overview.md`](./docs/architecture/overview.md) and the
+> [ADRs](./docs/adr/README.md) for the design. The existing entry
+> (`python launch.pyw`) stays the day-to-day way to use GenericAgent until
+> the new GUI reaches feature parity.
+
 #### Method 1: Standard Installation
 
 ```bash

@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+# Husky commit-msg hook — enforces Conventional Commits via commitlint.
+# Activated when contributors run `npx husky install` after `npm install` in
+# the repo root (root-level package.json adds husky as a devDep).
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Use the local commitlint binary if it exists; otherwise warn and pass through
+# so first-time clones don't get blocked before `npm install` finishes.
+if command -v npx >/dev/null 2>&1 && [ -f node_modules/.bin/commitlint ]; then
+  npx --no -- commitlint --edit "$1"
+else
+  echo "commitlint not installed yet (run 'npm install' in repo root); skipping check"
+fi
