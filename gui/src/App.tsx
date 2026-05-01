@@ -7,19 +7,22 @@ import { fetchHealth, fetchVersion } from '@/lib/api';
 import { ApiConfigsPage } from './features/api-configs';
 import { BotsPage } from './features/bots';
 import { SessionsPage } from './features/sessions';
+import { SettingsPage } from './features/settings';
 
-type TabKey = 'sessions' | 'bots' | 'api-configs';
+type TabKey = 'sessions' | 'bots' | 'api-configs' | 'settings';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'sessions', label: '会话' },
   { key: 'bots', label: 'Bots' },
   { key: 'api-configs', label: 'API 配置' },
+  { key: 'settings', label: '设置' },
 ];
 
 /**
- * Phase 1.3 main shell. Three tabs wired (sessions, bots, api-configs);
- * Settings tab arrives in 1.4. Header surfaces backend health + version,
- * tab state is local (refreshing the webview returns to "sessions").
+ * Phase 1 main shell. Four tabs wired (sessions, bots, api-configs,
+ * settings) — feature parity with the Qt launcher reached. Header
+ * surfaces backend health + version. Tab state is local (refreshing
+ * the webview returns to "sessions").
  */
 export function App(): JSX.Element {
   const [tab, setTab] = useState<TabKey>('sessions');
@@ -66,11 +69,8 @@ export function App(): JSX.Element {
         {tab === 'sessions' ? <SessionsPage /> : null}
         {tab === 'bots' ? <BotsPage /> : null}
         {tab === 'api-configs' ? <ApiConfigsPage /> : null}
+        {tab === 'settings' ? <SettingsPage /> : null}
       </main>
-
-      <footer className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-        下一步 tab：设置 · 详见 docs/architecture/overview.md
-      </footer>
     </div>
   );
 }

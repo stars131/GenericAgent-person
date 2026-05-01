@@ -276,6 +276,26 @@ def _route_profile_delete(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, load_profiles(_project_root())
 
 
+def _route_settings_get(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """GET /api/settings — read launcher_options.json normalised."""
+    from launcher.launch_config import load_options
+
+    return 200, {"settings": load_options(_project_root())}
+
+
+def _route_settings_put(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """PUT /api/settings — overwrite launcher_options.json with normalised body."""
+    from launcher.launch_config import load_options, save_options
+
+    body = req["body"]
+    if not isinstance(body, dict):
+        return 400, {"error": "invalid_body"}
+    # Merge over existing so the UI can send partial updates.
+    merged = {**load_options(_project_root()), **body}
+    saved = save_options(_project_root(), merged)
+    return 200, {"settings": saved}
+
+
 def _route_bots_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     from launcher.bot_manager import BOT_SPECS
 
@@ -372,6 +392,8 @@ ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any
     ("POST", "/api/bots/<key>/start", _route_bot_start),
     ("POST", "/api/bots/<key>/stop", _route_bot_stop),
     ("GET", "/api/bots/<key>/log", _route_bot_log),
+    ("GET", "/api/settings", _route_settings_get),
+    ("PUT", "/api/settings", _route_settings_put),
 ]
 
 
