@@ -78,14 +78,14 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. Install minimal dependencies
-pip install requests streamlit pywebview
+# 2. Install minimal dependencies (PySide6 for the Qt main window)
+pip install requests PySide6
 
 # 3. Configure API Key
-cp mykey_template.py mykey.py
+cp mykey_template_minimal.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
 
-# 4. Launch
+# 4. Launch — opens the Qt main window (sessions / bots / API config / settings)
 python launch.pyw
 ```
 
@@ -296,14 +296,14 @@ MIT License — see [LICENSE](LICENSE)
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. 安装最小依赖
-pip install requests streamlit pywebview
+# 2. 安装最小依赖（PySide6 用于 Qt 主窗口）
+pip install requests PySide6
 
 # 3. 配置 API Key
-cp mykey_template.py mykey.py
+cp mykey_template_minimal.py mykey.py
 # 编辑 mykey.py，填入你的 LLM API Key
 
-# 4. 启动
+# 4. 启动 —— 打开 Qt 主窗口（会话 / Bots / API 配置 / 设置 四标签页）
 python launch.pyw
 ```
 
