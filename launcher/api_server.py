@@ -553,6 +553,162 @@ def _match_pattern(pattern: str, path: str):
 # ─── HTTP plumbing ─────────────────────────────────────────────────────
 
 
+# SSE streaming endpoints. Handlers receive the request handler instance
+# and the matched path params, then write the response themselves —
+# headers + body — until the client disconnects. Paths use the same
+# `<id>` syntax as ROUTES.
+SSE_ROUTES: list[tuple[str, Callable[["_Handler", dict[str, str]], None]]] = []
+
+
+def _sse_route(pattern: str):
+    def deco(fn: Callable[["_Handler", dict[str, str]], None]):
+        SSE_ROUTES.append((pattern, fn))
+        return fn
+    return deco
+
+
+def _send_sse_headers(handler: "_Handler") -> None:
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache, no-transform")
+    handler.send_header("Connection", "keep-alive")
+    handler.send_header("X-Accel-Buffering", "no")  # nginx hint
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.end_headers()
+
+
+def _send_sse(handler: "_Handler", data: str, *, event: str | None = None) -> bool:
+    """Write a single SSE frame. Returns False if the client has disconnected."""
+    try:
+        if event:
+            handler.wfile.write(f"event: {event}\n".encode("utf-8"))
+        for line in data.splitlines() or [""]:
+            handler.wfile.write(f"data: {line}\n".encode("utf-8"))
+        handler.wfile.write(b"\n")
+        handler.wfile.flush()
+        return True
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return False
+
+
+def _tail_log_file(
+    handler: "_Handler",
+    path: str,
+    *,
+    initial_chars: int = 4000,
+    poll_interval: float = 0.5,
+    heartbeat: float = 25.0,
+    max_seconds: float = 600.0,
+) -> None:
+    """Stream a log file as SSE: send the existing tail then follow new appends.
+
+    Stops when the client disconnects, when max_seconds elapses, or when the
+    file is rotated/deleted.
+    """
+    _send_sse_headers(handler)
+    if not _send_sse(handler, json.dumps({"path": path, "exists": os.path.isfile(path)}), event="meta"):
+        return
+
+    if not os.path.isfile(path):
+        # No file yet — keep heartbeating until it appears or the client leaves.
+        deadline = time.monotonic() + max_seconds
+        last_beat = time.monotonic()
+        while time.monotonic() < deadline:
+            if os.path.isfile(path):
+                break
+            now = time.monotonic()
+            if now - last_beat > heartbeat:
+                if not _send_sse(handler, "ping", event="heartbeat"):
+                    return
+                last_beat = now
+            time.sleep(poll_interval)
+        if not os.path.isfile(path):
+            _send_sse(handler, json.dumps({"reason": "timeout"}), event="end")
+            return
+        if not _send_sse(handler, json.dumps({"path": path, "exists": True}), event="meta"):
+            return
+
+    try:
+        f = open(path, "r", encoding="utf-8", errors="replace")
+    except OSError as exc:
+        _send_sse(handler, json.dumps({"error": str(exc)}), event="error")
+        return
+
+    try:
+        # Seek to the start of the last `initial_chars` bytes.
+        f.seek(0, 2)  # end
+        size = f.tell()
+        f.seek(max(0, size - initial_chars))
+        # If we cut mid-line, drop the partial first line for tidiness.
+        if size > initial_chars:
+            f.readline()
+        head = f.read()
+        if head and not _send_sse(handler, head, event="append"):
+            return
+
+        deadline = time.monotonic() + max_seconds
+        last_beat = time.monotonic()
+        while time.monotonic() < deadline:
+            chunk = f.read()
+            if chunk:
+                if not _send_sse(handler, chunk, event="append"):
+                    return
+                last_beat = time.monotonic()
+                continue
+            now = time.monotonic()
+            if now - last_beat > heartbeat:
+                if not _send_sse(handler, "ping", event="heartbeat"):
+                    return
+                last_beat = now
+            # Detect rotation/truncation: if file shrunk, restart from end.
+            try:
+                cur_size = os.path.getsize(path)
+            except OSError:
+                _send_sse(handler, json.dumps({"reason": "deleted"}), event="end")
+                return
+            if cur_size < f.tell():
+                f.seek(0)
+            time.sleep(poll_interval)
+        _send_sse(handler, json.dumps({"reason": "max_seconds"}), event="end")
+    finally:
+        try:
+            f.close()
+        except Exception:
+            pass
+
+
+@_sse_route("/api/projects/<id>/log/stream")
+def _stream_project_log(handler: "_Handler", params: dict[str, str]) -> None:
+    project = _pm().get(params["id"])
+    if not project:
+        handler._send_json({"error": "not_found"}, status=404)
+        return
+    log_path = project.get("log_path") or os.path.join(
+        _project_root(), "temp", "project_logs", f"{project['id']}.log"
+    )
+    _tail_log_file(handler, log_path)
+
+
+@_sse_route("/api/bots/<key>/log/stream")
+def _stream_bot_log(handler: "_Handler", params: dict[str, str]) -> None:
+    from launcher.bot_manager import BOT_SPECS
+
+    key = params["key"]
+    if key not in BOT_SPECS:
+        handler._send_json({"error": "unknown_bot"}, status=404)
+        return
+    log_path = _bm().status(key).log_path
+    _tail_log_file(handler, log_path)
+
+
+def _match_sse(path: str):
+    for pattern, fn in SSE_ROUTES:
+        params = _match_pattern(pattern, path)
+        if params is not None:
+            return fn, params
+    return None, None
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     server_version = "GenericAgentAPI/0.1"
 
@@ -608,6 +764,18 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._send_json(payload, status=status)
 
     def do_GET(self) -> None:
+        # SSE routes are matched first since they take ownership of the
+        # response (they write headers + a long-lived body themselves).
+        path = urlparse(self.path).path
+        sse_handler, sse_params = _match_sse(path)
+        if sse_handler is not None:
+            try:
+                sse_handler(self, sse_params or {})
+            except Exception as exc:
+                # Client most likely disconnected; safe to swallow.
+                if os.environ.get("GA_API_DEBUG"):
+                    print(f"[SSE] {path}: {exc}")
+            return
         self._dispatch("GET")
 
     def do_POST(self) -> None:

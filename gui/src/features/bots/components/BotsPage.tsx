@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+
+import { useLogStream } from '@/lib/useLogStream';
 
 import { useBotLog } from '../hooks/useBots';
 
@@ -7,8 +9,30 @@ interface BotLogDrawerProps {
   onClose: () => void;
 }
 
+/**
+ * Bot log viewer. Defaults to a live SSE tail (pushes appends as soon as the
+ * bot writes to its log file). Falls back to a one-shot snapshot (useBotLog)
+ * on demand for users who prefer that view (e.g. for quick sharing).
+ */
 export function BotLogDrawer({ botKey, onClose }: BotLogDrawerProps): JSX.Element {
-  const { data, isLoading, error, refetch } = useBotLog(botKey);
+  const [mode, setMode] = useState<'live' | 'snapshot'>('live');
+  const stream = useLogStream(mode === 'live' ? `/api/bots/${botKey}/log/stream` : null);
+  const snapshot = useBotLog(mode === 'snapshot' ? botKey : null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll to bottom when new live lines land.
+  useEffect(() => {
+    if (mode !== 'live') return;
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [mode, stream.lines.length]);
+
+  const lines = mode === 'live' ? stream.lines : snapshot.data?.lines ?? [];
+  const isLoading = mode === 'snapshot' && snapshot.isLoading;
+  const errorText = mode === 'live' ? stream.error : snapshot.error ? String(snapshot.error) : null;
+  const exists = mode === 'live'
+    ? stream.status !== 'idle' && stream.status !== 'error'
+    : (snapshot.data?.exists ?? false);
 
   return (
     <div
@@ -21,19 +45,34 @@ export function BotLogDrawer({ botKey, onClose }: BotLogDrawerProps): JSX.Elemen
       >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <div>
-            <h3 className="font-medium">日志：{botKey}</h3>
-            {data?.path ? (
-              <p className="text-xs text-muted-foreground">{data.path}</p>
-            ) : null}
+            <h3 className="font-medium">
+              日志：{botKey}{' '}
+              <span className="text-xs text-muted-foreground">
+                {mode === 'live' ? `· ${stream.status}` : null}
+              </span>
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              {mode === 'live' ? 'SSE 实时模式' : '快照模式'} ·
+              {snapshot.data?.path ?? '(等待日志文件)'}
+            </p>
           </div>
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => void refetch()}
+              onClick={() => setMode((m) => (m === 'live' ? 'snapshot' : 'live'))}
               className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
             >
-              刷新
+              {mode === 'live' ? '切换快照' : '切换实时'}
             </button>
+            {mode === 'snapshot' ? (
+              <button
+                type="button"
+                onClick={() => void snapshot.refetch()}
+                className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
+              >
+                刷新
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onClose}
@@ -43,16 +82,19 @@ export function BotLogDrawer({ botKey, onClose }: BotLogDrawerProps): JSX.Elemen
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-auto bg-muted/40 p-3 font-mono text-xs">
+        <div
+          ref={scrollerRef}
+          className="flex-1 overflow-auto bg-muted/40 p-3 font-mono text-xs"
+        >
           {isLoading ? <p className="text-muted-foreground">加载中…</p> : null}
-          {error ? <p className="text-destructive">{String(error)}</p> : null}
-          {data && !data.exists ? (
+          {errorText ? <p className="text-destructive">{errorText}</p> : null}
+          {!exists && lines.length === 0 ? (
             <p className="text-muted-foreground">日志文件还不存在（bot 尚未运行）。</p>
           ) : null}
-          {data?.lines.length === 0 && data.exists ? (
-            <p className="text-muted-foreground">空文件。</p>
+          {exists && lines.length === 0 ? (
+            <p className="text-muted-foreground">空文件。等待新日志…</p>
           ) : null}
-          {data?.lines.map((line, i) => (
+          {lines.map((line, i) => (
             <div key={i} className="whitespace-pre-wrap break-all">
               {line}
             </div>
