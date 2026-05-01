@@ -37,5 +37,15 @@
     "category": "DeveloperTool",
     "shortDescription": "GenericAgent — self-evolving autonomous agent",
     "longDescription": "Desktop client for GenericAgent: multi-session chat orchestration, bot management, API config profiles."
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [
+        "https://github.com/stars131/GenericAgent-person/releases/latest/download/latest.json"
+      ],
+      "pubkey": "__placeholder__"
+    }
   }
 }
+

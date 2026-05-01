@@ -1,10 +1,17 @@
-"""GenericAgent launcher entry — Qt main window by default, legacy webview optional.
+"""GenericAgent launcher entry — Tauri GUI by default, Qt and webview as fallbacks.
 
-Behavior:
-  python launch.pyw                     # 默认: Qt launcher（4 标签页 + 菜单 + 状态栏）
-  python launch.pyw --feishu --tg ...   # 同上，启动时自动开 bot（写入 launcher_options.json）
-  python launch.pyw --legacy-shell      # 旧的 webview + Streamlit 默认会话流（向后兼容）
-  python launch.pyw --qt                # 别名（与默认相同；保留给老脚本）
+Phase 3 cutover (2026-05-02):
+  python launch.pyw                     # 默认: 新 Tauri GUI（gui/）
+                                        #   if a packaged binary or
+                                        #   `npm run tauri:dev` is available.
+                                        #   Falls back to Qt automatically.
+  python launch.pyw --qt-legacy         # 强制 Qt main window (PySide6)
+  python launch.pyw --legacy-shell      # 旧的 webview + Streamlit 流
+  python launch.pyw --feishu --tg ...   # 启动时自动开 bot（写入 launcher_options.json）
+
+The Tauri shell spawns its own Python `launcher.api_server` subprocess.
+This script's only Tauri responsibility is locating the binary or the dev
+command and exec-ing it.
 """
 import argparse
 import atexit
@@ -13,6 +20,7 @@ import importlib.util
 import os
 import random
 import runpy
+import shutil
 import socket
 import subprocess
 import sys
@@ -26,9 +34,10 @@ WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 820, 900, 0, 100
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
+gui_dir = os.path.join(script_dir, "gui")
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-LAUNCHER_LOCK_PORT = 19736  # singleton lock shared by Qt + legacy paths
+LAUNCHER_LOCK_PORT = 19736  # singleton lock shared by all paths
 
 window = None
 pm = None
@@ -121,8 +130,58 @@ def _apply_cli_overrides(args):
     return launch_options
 
 
+# ─── Tauri default path ───────────────────────────────────────────────
+
+
+def _find_tauri_binary():
+    """Look for a packaged Tauri build under gui/src-tauri/target/release/.
+
+    Returns the executable path or None. Bundle layout differs per platform
+    so we look at the folders Tauri actually emits.
+    """
+    base = os.path.join(gui_dir, "src-tauri", "target", "release")
+    candidates = []
+    if os.name == "nt":
+        candidates.append(os.path.join(base, "ga-gui.exe"))
+        candidates.append(os.path.join(base, "GenericAgent.exe"))
+    elif sys.platform == "darwin":
+        candidates.append(os.path.join(
+            base, "bundle", "macos", "GenericAgent.app", "Contents", "MacOS", "GenericAgent"
+        ))
+        candidates.append(os.path.join(base, "ga-gui"))
+    else:
+        candidates.append(os.path.join(base, "ga-gui"))
+        candidates.append(os.path.join(base, "GenericAgent"))
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def _have_tauri_dev():
+    if not os.path.isdir(gui_dir):
+        return False
+    if shutil.which("npm") is None:
+        return False
+    return os.path.isfile(os.path.join(gui_dir, "package.json"))
+
+
+def run_tauri():
+    """Try to start the Tauri GUI. Returns the exit code, or None if Tauri
+    isn't available on this machine (caller should fall back to Qt)."""
+    binary = _find_tauri_binary()
+    if binary:
+        print(f"[Launch] Starting Tauri binary: {binary}")
+        return subprocess.call([binary])
+    if _have_tauri_dev():
+        print("[Launch] Starting Tauri dev (npm run tauri:dev)…")
+        return subprocess.call(["npm", "run", "tauri:dev"], cwd=gui_dir, shell=(os.name == "nt"))
+    print("[Launch] Tauri GUI not found (no packaged binary, no node/npm). Falling back to Qt.")
+    return None
+
+
 def run_qt(launch_options):
-    """Default path — Qt launcher; BotManager inside it auto-starts bots from launch_options."""
+    """Qt launcher (PySide6); BotManager auto-starts bots from launch_options."""
     from launcher.qt_launcher import main as qt_main
     return qt_main()
 
@@ -193,7 +252,7 @@ def run_legacy_shell(launch_options):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="GenericAgent launcher (Qt main window by default).",
+        description="GenericAgent launcher (Tauri GUI by default).",
     )
     parser.add_argument("port", nargs="?", default="0", help=argparse.SUPPRESS)
     parser.add_argument("--tg", action="store_true", help="Start Telegram bot at launch")
@@ -214,10 +273,10 @@ if __name__ == "__main__":
                         help="Disable L4 scheduler")
     parser.add_argument("--llm_no", type=int, default=None,
                         help="Default LLM index (saved to launcher_options.json)")
+    parser.add_argument("--qt-legacy", "--qt", dest="qt_legacy", action="store_true",
+                        help="Force the previous Qt main window (PySide6)")
     parser.add_argument("--legacy-shell", action="store_true",
-                        help="Use legacy webview + Streamlit default-session shell")
-    # --qt kept for backward compat as a no-op alias for the default path
-    parser.add_argument("--qt", action="store_true", help=argparse.SUPPRESS)
+                        help="Use the original webview + Streamlit default-session shell")
     args = parser.parse_args()
 
     launch_options = _apply_cli_overrides(args)
@@ -229,5 +288,13 @@ if __name__ == "__main__":
 
     if args.legacy_shell:
         run_legacy_shell(launch_options)
-    else:
+        sys.exit(0)
+
+    if args.qt_legacy:
         sys.exit(run_qt(launch_options))
+
+    # Default: try Tauri, fall back to Qt.
+    rc = run_tauri()
+    if rc is not None:
+        sys.exit(rc)
+    sys.exit(run_qt(launch_options))

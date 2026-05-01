@@ -13,7 +13,8 @@ revisited, write a new ADR that supersedes the old one (don't edit history).
 | [0003](./0003-python-http-server-ipc.md) | Python HTTP server as IPC mechanism | Accepted |
 | [0004](./0004-feature-based-folder-structure.md) | Feature-based folder structure for the React app | Accepted |
 | [0005](./0005-shadcn-tailwind.md) | shadcn/ui + Tailwind for components | Accepted |
-| [0006](./0006-per-session-api-config.md) | Per-session API config selection | Proposed |
+| [0006](./0006-per-session-api-config.md) | Per-session API config selection | Accepted |
+| [0007](./0007-release-strategy.md) | Tauri release / signing / updater strategy | Accepted |
 
 ## Format
 

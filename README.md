@@ -71,13 +71,13 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 
 ## 🚀 Quick Start
 
-> **Coming next**: a unified Tauri + React desktop GUI is under construction
-> in [`gui/`](./gui/). Phase 0 (scaffolding + enterprise standards) has
-> landed; feature work follows in Phase 1+. See
-> [`docs/architecture/overview.md`](./docs/architecture/overview.md) and the
-> [ADRs](./docs/adr/README.md) for the design. The existing entry
-> (`python launch.pyw`) stays the day-to-day way to use GenericAgent until
-> the new GUI reaches feature parity.
+> The new **Tauri + React desktop GUI** in [`gui/`](./gui/) is now the default
+> entry. `python launch.pyw` boots the Tauri app if it's available (packaged
+> binary or `npm run tauri:dev`), and falls back to the previous Qt launcher
+> automatically. Pass `--qt-legacy` to force Qt or `--legacy-shell` for the
+> original webview shell.
+> See [`docs/architecture/overview.md`](./docs/architecture/overview.md) and
+> the [ADRs](./docs/adr/README.md) for the design.
 
 #### Method 1: Standard Installation
 
