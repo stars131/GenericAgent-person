@@ -296,6 +296,128 @@ def _route_settings_put(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"settings": saved}
 
 
+# ─── Bot credentials editor ───────────────────────────────────────────
+#
+# We surface ONLY a known whitelist of mykey fields that correspond to bot
+# credentials. The whole mykey scan happens server-side; the GUI never sees
+# unrelated keys (LLM apikeys, Sophub tokens, Langfuse, etc).
+
+_BOT_CRED_FIELDS = {
+    "tg": ["tg_bot_token", "tg_allowed_users"],
+    "qq": ["qq_app_id", "qq_app_secret", "qq_allowed_users"],
+    "feishu": ["fs_app_id", "fs_app_secret", "fs_allowed_users"],
+    "wecom": ["wecom_bot_id", "wecom_secret", "wecom_allowed_users", "wecom_welcome_message"],
+    "dingtalk": ["dingtalk_client_id", "dingtalk_client_secret", "dingtalk_allowed_users"],
+}
+_ALL_BOT_FIELDS = {f for fs in _BOT_CRED_FIELDS.values() for f in fs}
+
+
+def _read_credentials() -> dict[str, Any]:
+    """Read whitelisted bot credentials from mykey.py and mykey_local_override.py."""
+    import runpy
+
+    out: dict[str, Any] = {}
+    for name in ("mykey.py", "mykey_local_override.py"):
+        path = os.path.join(_project_root(), name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            values = runpy.run_path(path)
+        except Exception:
+            continue
+        for k, v in values.items():
+            if k in _ALL_BOT_FIELDS:
+                out[k] = v
+    return out
+
+
+def _route_credentials_get(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """GET /api/credentials → {fields: {bot:[..]}, values: {bot:{field:val}}}"""
+    creds = _read_credentials()
+    grouped: dict[str, dict[str, Any]] = {}
+    for bot, fields in _BOT_CRED_FIELDS.items():
+        grouped[bot] = {f: creds.get(f, "") for f in fields}
+        # Mask secrets but leave list-valued fields intact for round-trip.
+        for f in fields:
+            if any(token in f for token in ("secret", "token")) and grouped[bot][f]:
+                grouped[bot][f] = "***"
+    return 200, {"fields": _BOT_CRED_FIELDS, "values": grouped}
+
+
+def _route_credentials_put(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """PUT /api/credentials body: {<field>: <value>, ...}
+
+    Only fields in the whitelist are written. `***` values are treated as
+    "no change" so the UI can echo the masked GET payload back without
+    nuking real values.
+    """
+    body = req["body"]
+    if not isinstance(body, dict):
+        return 400, {"error": "invalid_body"}
+    incoming = {k: v for k, v in body.items() if k in _ALL_BOT_FIELDS}
+    if not incoming:
+        return 400, {"error": "no_known_fields"}
+
+    existing = _read_credentials()
+    merged = dict(existing)
+    for k, v in incoming.items():
+        if v == "***":
+            continue  # preserve existing
+        if isinstance(v, str) and not v.strip():
+            merged.pop(k, None)
+            continue
+        merged[k] = v
+
+    _write_credentials_to_override(merged)
+    return _route_credentials_get(req)
+
+
+def _write_credentials_to_override(creds: dict[str, Any]) -> None:
+    """Append/replace bot credential lines in mykey_local_override.py.
+
+    We preserve any unrelated lines (Qt launcher's auto-generated configs)
+    by keeping their text and rewriting only the whitelisted assignments.
+    """
+    path = os.path.join(_project_root(), "mykey_local_override.py")
+    existing_lines: list[str] = []
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            existing_lines = f.readlines()
+
+    # Strip any current assignments to whitelisted fields, keep the rest.
+    keep: list[str] = []
+    skip_blank_run = False
+    import re as _re
+
+    pattern = _re.compile(rf"^\s*({'|'.join(_re.escape(f) for f in _ALL_BOT_FIELDS)})\s*=")
+    for line in existing_lines:
+        if pattern.match(line):
+            skip_blank_run = True
+            continue
+        if skip_blank_run and line.strip() == "":
+            continue
+        skip_blank_run = False
+        keep.append(line)
+
+    # Build new credential block
+    block: list[str] = ["", "# bot credentials (managed by GUI /api/credentials)"]
+    for k in sorted(creds):
+        block.append(f"{k} = {creds[k]!r}")
+    block.append("")
+
+    new_text = "".join(keep).rstrip() + "\n" + "\n".join(block)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    try:
+        import stat
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+
+
 def _route_bots_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     from launcher.bot_manager import BOT_SPECS
 
@@ -394,6 +516,8 @@ ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any
     ("GET", "/api/bots/<key>/log", _route_bot_log),
     ("GET", "/api/settings", _route_settings_get),
     ("PUT", "/api/settings", _route_settings_put),
+    ("GET", "/api/credentials", _route_credentials_get),
+    ("PUT", "/api/credentials", _route_credentials_put),
 ]
 
 

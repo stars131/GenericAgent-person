@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { CredentialsCard } from '@/features/credentials';
+
 import { useConfigs, useProfiles, useSaveConfigs } from '../hooks/useApiConfigs';
 import type { ApiConfigEntry } from '../types';
 
@@ -106,6 +108,9 @@ export function ApiConfigsPage(): JSX.Element {
           onClose={() => setEditing(null)}
         />
       ) : null}
+
+      <hr className="border-border my-4" />
+      <CredentialsCard />
     </div>
   );
 }
