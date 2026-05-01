@@ -4,21 +4,22 @@ import { useQuery } from '@tanstack/react-query';
 
 import { fetchHealth, fetchVersion } from '@/lib/api';
 
+import { ApiConfigsPage } from './features/api-configs';
 import { BotsPage } from './features/bots';
 import { SessionsPage } from './features/sessions';
 
-type TabKey = 'sessions' | 'bots';
+type TabKey = 'sessions' | 'bots' | 'api-configs';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'sessions', label: '会话' },
   { key: 'bots', label: 'Bots' },
+  { key: 'api-configs', label: 'API 配置' },
 ];
 
 /**
- * Phase 1.2 main shell. Two tabs are wired (sessions, bots); the remaining
- * tabs (API configs, settings) ship in subsequent commits. Header surfaces
- * backend health + version. Tab state is local — refreshing the webview
- * resets to "sessions" by design.
+ * Phase 1.3 main shell. Three tabs wired (sessions, bots, api-configs);
+ * Settings tab arrives in 1.4. Header surfaces backend health + version,
+ * tab state is local (refreshing the webview returns to "sessions").
  */
 export function App(): JSX.Element {
   const [tab, setTab] = useState<TabKey>('sessions');
@@ -64,10 +65,11 @@ export function App(): JSX.Element {
       <main className="flex-1 overflow-auto">
         {tab === 'sessions' ? <SessionsPage /> : null}
         {tab === 'bots' ? <BotsPage /> : null}
+        {tab === 'api-configs' ? <ApiConfigsPage /> : null}
       </main>
 
       <footer className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-        下一步 tab：API 配置 / 设置 · 详见 docs/architecture/overview.md
+        下一步 tab：设置 · 详见 docs/architecture/overview.md
       </footer>
     </div>
   );

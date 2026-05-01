@@ -197,11 +197,83 @@ def _route_configs_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"configs": list_api_configs(_project_root())}
 
 
+def _route_configs_save(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """PUT /api/configs — replace the whole list (mirrors Qt launcher save)."""
+    from launcher.api_config import list_api_configs, save_api_configs
+
+    body = req["body"]
+    incoming = body.get("configs")
+    if not isinstance(incoming, list):
+        return 400, {"error": "missing_field", "expected": "configs: [..]"}
+    try:
+        save_api_configs(_project_root(), incoming)
+    except ValueError as exc:
+        return 400, {"error": "invalid_config", "detail": str(exc)}
+    # Return through list_api_configs so apikey is masked, matching GET path.
+    return 200, {"configs": list_api_configs(_project_root())}
+
+
 def _route_profiles_get(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     from launcher.api_config import load_profiles
 
     state = load_profiles(_project_root())
     return 200, {"active": state.get("active"), "profiles": state.get("profiles", {})}
+
+
+def _route_profiles_set_active(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """PUT /api/profiles/active body: {name: str|null}"""
+    from launcher.api_config import load_profiles, set_active_profile
+
+    name = req["body"].get("name")
+    if name is not None and not isinstance(name, str):
+        return 400, {"error": "invalid_name"}
+    try:
+        set_active_profile(_project_root(), name)
+    except ValueError as exc:
+        return 404, {"error": "profile_not_found", "detail": str(exc)}
+    return 200, load_profiles(_project_root())
+
+
+def _route_profiles_upsert(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """POST /api/profiles body: {name, members}"""
+    from launcher.api_config import load_profiles, upsert_profile
+
+    body = req["body"]
+    name = str(body.get("name") or "").strip()
+    members = body.get("members") or []
+    if not name:
+        return 400, {"error": "missing_name"}
+    if not isinstance(members, list):
+        return 400, {"error": "invalid_members"}
+    try:
+        upsert_profile(_project_root(), name, [str(m) for m in members])
+    except ValueError as exc:
+        return 400, {"error": "invalid", "detail": str(exc)}
+    return 200, load_profiles(_project_root())
+
+
+def _route_profile_rename(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """PATCH /api/profiles/<name> body: {new_name}"""
+    from launcher.api_config import load_profiles, rename_profile
+
+    old_name = req["params"]["name"]
+    new_name = str(req["body"].get("new_name") or "").strip()
+    if not new_name:
+        return 400, {"error": "missing_new_name"}
+    try:
+        rename_profile(_project_root(), old_name, new_name)
+    except ValueError as exc:
+        return 400, {"error": "rename_failed", "detail": str(exc)}
+    return 200, load_profiles(_project_root())
+
+
+def _route_profile_delete(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """DELETE /api/profiles/<name>"""
+    from launcher.api_config import delete_profile, load_profiles
+
+    name = req["params"]["name"]
+    delete_profile(_project_root(), name)
+    return 200, load_profiles(_project_root())
 
 
 def _route_bots_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -290,7 +362,12 @@ ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any
     ("PATCH", "/api/projects/<id>", _route_project_patch),
     ("PUT", "/api/projects/<id>/llm", _route_project_set_llm),
     ("GET", "/api/configs", _route_configs_list),
+    ("PUT", "/api/configs", _route_configs_save),
     ("GET", "/api/profiles", _route_profiles_get),
+    ("PUT", "/api/profiles/active", _route_profiles_set_active),
+    ("POST", "/api/profiles", _route_profiles_upsert),
+    ("PATCH", "/api/profiles/<name>", _route_profile_rename),
+    ("DELETE", "/api/profiles/<name>", _route_profile_delete),
     ("GET", "/api/bots", _route_bots_list),
     ("POST", "/api/bots/<key>/start", _route_bot_start),
     ("POST", "/api/bots/<key>/stop", _route_bot_stop),
