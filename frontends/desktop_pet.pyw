@@ -1,4 +1,9 @@
-"""Desktop Pet with HTTP Toast — ~90 lines"""
+"""Desktop Pet with HTTP Toast — ~90 lines
+
+DEPRECATED: 此版本已被 desktop_pet_v2.pyw 取代（多皮肤 / 多状态 / sprite sheet
+支持，详见 frontends/DESKTOP_PET_README.md）。stapp.py 的 v2-优先 fallback
+仍会在 v2 不存在时回退到此文件，保留兼容性。新用户请使用 v2。
+"""
 import tkinter as tk, threading, random, os, sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs

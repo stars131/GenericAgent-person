@@ -22,6 +22,20 @@ st.set_page_config(page_title="Cowork", layout="wide")
 @st.cache_resource
 def init():
     agent = GeneraticAgent()
+    try:
+        agent.next_llm(int(os.environ.get("GA_LLM_NO", "0") or 0))
+    except Exception:
+        pass
+    permission_mode = os.environ.get("GA_PERMISSION_MODE", "auto") or "auto"
+    project_root = os.environ.get("GA_PROJECT_ROOT", "").strip() or None
+    use_project_context = os.environ.get("GA_USE_PROJECT_CONTEXT", "1").strip().lower() not in {"0", "false", "no", "off"}
+    agent.configure_cli(
+        permission_mode=permission_mode,
+        project_root=project_root,
+        use_project_context=use_project_context,
+        interactive=False,
+        cwd_project=True,
+    )
     if agent.llmclient is None:
         st.error("⚠️ 未配置任何可用的 LLM 接口，请设置mykey.py。")
         st.stop()
@@ -34,7 +48,8 @@ _proj_name = os.environ.get("GA_PROJECT_NAME", "").strip()
 _proj_id = os.environ.get("GA_PROJECT_ID", "").strip() or "default"
 st.title(f"🖥️ Cowork · {_proj_name}" if _proj_name else "🖥️ Cowork")
 
-if 'autonomous_enabled' not in st.session_state: st.session_state.autonomous_enabled = False
+if 'autonomous_enabled' not in st.session_state:
+    st.session_state.autonomous_enabled = os.environ.get("GA_AUTONOMOUS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 @st.fragment
 def render_sidebar():

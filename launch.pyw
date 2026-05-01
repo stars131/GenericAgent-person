@@ -1,3 +1,11 @@
+"""GenericAgent launcher entry — Qt main window by default, legacy webview optional.
+
+Behavior:
+  python launch.pyw                     # 默认: Qt launcher（4 标签页 + 菜单 + 状态栏）
+  python launch.pyw --feishu --tg ...   # 同上，启动时自动开 bot（写入 launcher_options.json）
+  python launch.pyw --legacy-shell      # 旧的 webview + Streamlit 默认会话流（向后兼容）
+  python launch.pyw --qt                # 别名（与默认相同；保留给老脚本）
+"""
 import argparse
 import atexit
 import ctypes
@@ -9,11 +17,10 @@ import socket
 import subprocess
 import sys
 
-import webview
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from launcher.project_manager import ProjectManager
 from launcher.shell_server import serve as serve_shell
+from launcher.launch_config import load_options, project_options, save_options
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 820, 900, 0, 100
 
@@ -21,7 +28,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 frontends_dir = os.path.join(script_dir, "frontends")
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-LAUNCHER_LOCK_PORT = 19736  # singleton lock for the local-UI launcher
+LAUNCHER_LOCK_PORT = 19736  # singleton lock shared by Qt + legacy paths
 
 window = None
 pm = None
@@ -51,6 +58,7 @@ def acquire_singleton():
 
 
 def get_feishu_startup_status():
+    """Legacy helper for --legacy-shell path; Qt path uses BotManager instead."""
     keys = {}
     for name in ("mykey.py", "mykey_local_override.py"):
         path = os.path.join(script_dir, name)
@@ -75,7 +83,7 @@ def spawn_background(script_name):
 
 
 def on_closing():
-    """Called when the user clicks the close button."""
+    """Called when the user clicks the close button (legacy webview shell only)."""
     if pm is None: return True
     running = [p for p in pm.list()["projects"] if p["running"]]
     if not running:
@@ -98,39 +106,41 @@ def on_closing():
     return True
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("port", nargs="?", default="0", help="(legacy, ignored)")
-    parser.add_argument("--tg", action="store_true", help="Start Telegram bot")
-    parser.add_argument("--qq", action="store_true", help="Start QQ bot")
-    parser.set_defaults(feishu=False)
-    parser.add_argument("--feishu", "--fs", dest="feishu", action="store_true", help="Start Feishu bot")
-    parser.add_argument("--no-feishu", dest="feishu", action="store_false", help="Do not start Feishu bot")
-    parser.add_argument("--wecom", action="store_true", help="Start WeCom bot")
-    parser.add_argument("--dingtalk", "--dt", dest="dingtalk", action="store_true", help="Start DingTalk bot")
-    parser.add_argument("--sched", action="store_true", help="Start task scheduler")
-    parser.add_argument("--llm_no", type=int, default=0, help="LLM index")
-    args = parser.parse_args()
+def _apply_cli_overrides(args):
+    launch_options = load_options(script_dir)
+    cli_overrides = {}
+    for key in ("tg", "qq", "feishu", "wecom", "dingtalk", "wechat"):
+        if getattr(args, key, False):
+            cli_overrides[key] = True
+    if args.sched is not None:
+        cli_overrides["scheduler"] = args.sched
+    if args.llm_no is not None:
+        cli_overrides["llm_no"] = args.llm_no
+    if cli_overrides:
+        launch_options = save_options(script_dir, {**launch_options, **cli_overrides})
+    return launch_options
 
-    lock = acquire_singleton()
-    if lock is None:
-        print("[Launch] Another launcher is already running.")
-        sys.exit(0)
 
+def run_qt(launch_options):
+    """Default path — Qt launcher; BotManager inside it auto-starts bots from launch_options."""
+    from launcher.qt_launcher import main as qt_main
+    return qt_main()
+
+
+def run_legacy_shell(launch_options):
+    """Webview + Streamlit default-session flow (kept for backward compat)."""
+    global pm, window
     pm = ProjectManager(script_dir)
 
-    # Bootstrap: create a default project on first run
     if not pm.projects:
         print("[Launch] First run — creating default project")
         active = pm.create("默认对话", auto_start=False)
         try:
+            pm.update_options(active["id"], project_options(launch_options))
             pm.start(active["id"])
         except Exception as exc:
             print(f"[Launch] {exc}")
     else:
-        # Reattach: any project whose pid+port still alive stays "running" automatically
-        # (ProjectManager.is_running checks both). Auto-start the last active project
-        # if it's not currently running.
         active = next((p for p in pm.projects if p["id"] == pm.active_id), None) or pm.projects[0]
         if not pm.is_running(active):
             print(f"[Launch] Auto-starting last active project: {active['name']}")
@@ -140,40 +150,36 @@ if __name__ == "__main__":
                 print(f"[Launch] {exc}")
 
     shell_port = find_free_port()
-    serve_shell(pm, shell_port)
+    serve_shell(pm, shell_port, script_dir)
     print(f"[Launch] Shell on http://127.0.0.1:{shell_port}/")
 
-    # Bots — kept tied to launcher lifetime (atexit kill), orthogonal to local projects
-    if args.tg: spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
-    if args.qq: spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
-
+    if launch_options.get("tg"): spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
+    if launch_options.get("qq"): spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
     feishu_ready, feishu_reason = get_feishu_startup_status()
-    if args.feishu and feishu_ready:
+    if launch_options.get("feishu") and feishu_ready:
         spawn_background("fsapp.py"); print("[Launch] Feishu Bot started")
-    elif args.feishu:
+    elif launch_options.get("feishu"):
         print(f"[Launch] Feishu Bot requested but not started: {feishu_reason}")
-    else:
-        print("[Launch] Feishu Bot not enabled (use --feishu to start)")
+    if launch_options.get("wecom"): spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
+    if launch_options.get("dingtalk"): spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
+    if launch_options.get("wechat"): spawn_background("wechatapp.py"); print("[Launch] WeChat Bot started")
 
-    if args.wecom: spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
-    if args.dingtalk: spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
-
-    if args.sched:
+    if launch_options.get("scheduler", True):
         scheduler_proc = subprocess.Popen(
             [sys.executable, os.path.join(script_dir, "agentmain.py"),
              "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"),
-             "--llm_no", str(args.llm_no)],
+             "--llm_no", str(launch_options.get("llm_no", 0))],
             creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         atexit.register(scheduler_proc.kill)
         print("[Launch] Task Scheduler started")
 
     if os.name == "nt":
-        screen_width = get_screen_width()
-        x_pos = screen_width - WINDOW_WIDTH - RIGHT_PADDING
+        x_pos = get_screen_width() - WINDOW_WIDTH - RIGHT_PADDING
     else:
         x_pos = 100
 
+    import webview
     window = webview.create_window(
         title="GenericAgent",
         url=f"http://127.0.0.1:{shell_port}/",
@@ -183,3 +189,45 @@ if __name__ == "__main__":
     )
     window.events.closing += on_closing
     webview.start()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="GenericAgent launcher (Qt main window by default).",
+    )
+    parser.add_argument("port", nargs="?", default="0", help=argparse.SUPPRESS)
+    parser.add_argument("--tg", action="store_true", help="Start Telegram bot at launch")
+    parser.add_argument("--qq", action="store_true", help="Start QQ bot at launch")
+    parser.set_defaults(feishu=False)
+    parser.add_argument("--feishu", "--fs", dest="feishu", action="store_true",
+                        help="Start Feishu bot at launch")
+    parser.add_argument("--no-feishu", dest="feishu", action="store_false",
+                        help="Disable Feishu bot at launch")
+    parser.add_argument("--wecom", action="store_true", help="Start WeCom bot at launch")
+    parser.add_argument("--dingtalk", "--dt", dest="dingtalk", action="store_true",
+                        help="Start DingTalk bot at launch")
+    parser.add_argument("--wechat", action="store_true", help="Start personal WeChat bot at launch")
+    parser.set_defaults(sched=None)
+    parser.add_argument("--sched", dest="sched", action="store_true",
+                        help="Enable L4 scheduler")
+    parser.add_argument("--no-sched", dest="sched", action="store_false",
+                        help="Disable L4 scheduler")
+    parser.add_argument("--llm_no", type=int, default=None,
+                        help="Default LLM index (saved to launcher_options.json)")
+    parser.add_argument("--legacy-shell", action="store_true",
+                        help="Use legacy webview + Streamlit default-session shell")
+    # --qt kept for backward compat as a no-op alias for the default path
+    parser.add_argument("--qt", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+
+    launch_options = _apply_cli_overrides(args)
+
+    lock = acquire_singleton()
+    if lock is None:
+        print("[Launch] Another launcher is already running.")
+        sys.exit(0)
+
+    if args.legacy_shell:
+        run_legacy_shell(launch_options)
+    else:
+        sys.exit(run_qt(launch_options))

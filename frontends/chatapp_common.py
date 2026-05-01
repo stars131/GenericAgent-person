@@ -1,34 +1,10 @@
 import ast, asyncio, glob, json, os, queue as Q, re, socket, sys, time
 
 import project_context
-
-HELP_COMMANDS = (
-    ("/help", "显示帮助"),
-    ("/status", "查看状态"),
-    ("/stop", "停止当前任务"),
-    ("/new", "开启新对话并清空当前上下文"),
-    ("/restore", "恢复上次对话历史"),
-    ("/continue", "列出可恢复会话"),
-    ("/continue [n]", "恢复第 n 个会话"),
-    ("/llm", "查看当前模型列表"),
-    ("/llm [n]", "切换到第 n 个模型"),
-)
-TELEGRAM_MENU_COMMANDS = (
-    ("help", "显示帮助"),
-    ("status", "查看状态"),
-    ("stop", "停止当前任务"),
-    ("new", "开启新对话并清空当前上下文"),
-    ("restore", "恢复上次对话历史"),
-    ("continue", "列出可恢复会话；/continue n 恢复第 n 个"),
-    ("llm", "查看模型列表；/llm n 切换到指定模型"),
-)
-
-
-def build_help_text(commands=HELP_COMMANDS):
-    return "📖 命令列表:\n" + "\n".join(f"{cmd} - {desc}" for cmd, desc in commands)
-
-
-HELP_TEXT = build_help_text()
+try:
+    from cli_commands import HELP_TEXT, TELEGRAM_MENU_COMMANDS, SharedCommandHandler
+except ImportError:
+    from .cli_commands import HELP_TEXT, TELEGRAM_MENU_COMMANDS, SharedCommandHandler
 FILE_HINT = "If you need to show files to user, use [FILE:filepath] in your response."
 TAG_PATS = [r"<" + t + r">.*?</" + t + r">" for t in ("thinking", "summary", "tool_use", "file_content")]
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -259,46 +235,12 @@ class AgentChatMixin:
         await self.send_text(chat_id, build_done_text(raw_text), **ctx)
 
     async def handle_command(self, chat_id, cmd, **ctx):
-        parts = (cmd or "").split()
-        op = (parts[0] if parts else "").lower()
-        if op == "/help":
-            return await self.send_text(chat_id, HELP_TEXT, **ctx)
-        if op == "/stop":
+        if (cmd or "").split()[0:1] == ["/stop"]:
             state = self.user_tasks.get(chat_id)
             if state:
                 state["running"] = False
-            self.agent.abort()
-            return await self.send_text(chat_id, "⏹️ 正在停止...", **ctx)
-        if op == "/status":
-            llm = self.agent.get_llm_name() if self.agent.llmclient else "未配置"
-            return await self.send_text(chat_id, f"状态: {'🔴 运行中' if self.agent.is_running else '🟢 空闲'}\nLLM: [{self.agent.llm_no}] {llm}", **ctx)
-        if op == "/llm":
-            if not self.agent.llmclient:
-                return await self.send_text(chat_id, "❌ 当前没有可用的 LLM 配置", **ctx)
-            if len(parts) > 1:
-                try:
-                    self.agent.next_llm(int(parts[1]))
-                    return await self.send_text(chat_id, f"✅ 已切换到 [{self.agent.llm_no}] {self.agent.get_llm_name()}", **ctx)
-                except Exception:
-                    return await self.send_text(chat_id, f"用法: /llm <0-{len(self.agent.list_llms()) - 1}>", **ctx)
-            lines = [f"{'→' if cur else '  '} [{i}] {name}" for i, name, cur in self.agent.list_llms()]
-            return await self.send_text(chat_id, "LLMs:\n" + "\n".join(lines), **ctx)
-        if op == "/restore":
-            try:
-                restored_info, err = format_restore()
-                if err:
-                    return await self.send_text(chat_id, err, **ctx)
-                restored, fname, count = restored_info
-                self.agent.abort()
-                self.agent.history.extend(restored)
-                return await self.send_text(chat_id, f"✅ 已恢复 {count} 轮对话\n来源: {fname}\n(仅恢复上下文，请输入新问题继续)", **ctx)
-            except Exception as e:
-                return await self.send_text(chat_id, f"❌ 恢复失败: {e}", **ctx)
-        if op == "/continue":
-            return await self.send_text(chat_id, _handle_continue_frontend(self.agent, cmd), **ctx)
-        if op == "/new":
-            return await self.send_text(chat_id, _reset_conversation(self.agent), **ctx)
-        return await self.send_text(chat_id, HELP_TEXT, **ctx)
+        result = SharedCommandHandler(self.agent).handle(cmd)
+        return await self.send_text(chat_id, result.message or HELP_TEXT, **ctx)
 
     async def run_agent(self, chat_id, text, **ctx):
         state = {"running": True}
@@ -328,7 +270,3 @@ class AgentChatMixin:
         finally:
             self.user_tasks.pop(chat_id, None)
 
-
-from agentmain import GeneraticAgent as _GA
-from continue_cmd import handle_frontend_command as _handle_continue_frontend, install as _install_continue, reset_conversation as _reset_conversation
-_install_continue(_GA)

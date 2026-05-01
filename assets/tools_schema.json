@@ -69,5 +69,20 @@
     "name": "start_long_term_update",
     "description": "Start distilling long-term memory. Call when discovering info worth remembering (env facts/user prefs/lessons learned). Skip if memory already updated or in autonomous flow. Must call when a task that took 15+ turns is completed",
     "parameters": {"type": "object", "properties": {}}}
+  },
+  {"type": "function", "function": {
+    "name": "sop_search",
+    "description": "Search Sophub (fudankw.cn/sophub) for SOPs / shared skills others uploaded. Use this as a first move on unfamiliar tasks — there may already be a verified workflow you can reuse instead of figuring it out from scratch. Returns top results with id, title, score and a short preview.",
+    "parameters": {"type": "object", "properties": {
+      "query": {"type": "string", "description": "Natural-language query (zh or en both fine)"},
+      "top_k": {"type": "integer", "description": "Number of results (1-25)", "default": 5}},
+      "required": ["query"]}}
+  },
+  {"type": "function", "function": {
+    "name": "sop_read",
+    "description": "Fetch the full content of a specific SOP by id (id from sop_search). Use BEFORE applying an SOP so you have the actual steps, not just the preview.",
+    "parameters": {"type": "object", "properties": {
+      "sop_id": {"type": "string", "description": "SOP id from sop_search results"}},
+      "required": ["sop_id"]}}
   }
 ]

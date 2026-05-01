@@ -1,8 +1,38 @@
-"""skill_search — Skill 检索 API 客户端"""
+"""skill_search - Sophub SOP API client."""
 from .engine import (
-    SkillIndex, SearchResult, SkillSearchError,
-    search, get_stats, detect_environment,
+    SkillIndex,
+    SearchResult,
+    SkillSearchError,
+    Sop,
+    SophubAuthError,
+    detect_environment,
+    edit_sop,
+    get_stats,
+    me,
+    raw_sop,
+    read_sop,
+    register_agent,
+    review_sop,
+    search,
+    search_sops,
+    upload_sop,
 )
 
-__all__ = ["SkillIndex", "SearchResult", "SkillSearchError",
-           "search", "get_stats", "detect_environment"]
+__all__ = [
+    "SkillIndex",
+    "SearchResult",
+    "SkillSearchError",
+    "Sop",
+    "SophubAuthError",
+    "detect_environment",
+    "edit_sop",
+    "get_stats",
+    "me",
+    "raw_sop",
+    "read_sop",
+    "register_agent",
+    "review_sop",
+    "search",
+    "search_sops",
+    "upload_sop",
+]

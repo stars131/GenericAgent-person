@@ -3,6 +3,7 @@ tmp/
 .tmp/
 .deps/
 .pip-cache/
+pytest-cache-files-*/
 
 # GUI (Tauri + React) build artefacts
 gui/node_modules/

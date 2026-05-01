@@ -1,8 +1,49 @@
 import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class LoadedProjectContext:
+    root: str
+    files: list[str]
+    text: str = ""
+    warnings: list[str] | None = None
 
 
 def repo_root():
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def find_project_root(start_dir=None):
+    cur = Path(start_dir or os.getcwd()).resolve()
+    if cur.is_file():
+        cur = cur.parent
+    for path in (cur, *cur.parents):
+        if (path / ".git").exists():
+            return str(path)
+    return str(cur)
+
+
+def discover_context_files(root):
+    root_path = Path(root).resolve()
+    names = ("CLAUDE.md", "AGENTS.md", "README.md")
+    return [str(root_path / name) for name in names if (root_path / name).is_file()]
+
+
+def load_project_context(root=None, enabled=True):
+    root = find_project_root(root)
+    if not enabled:
+        return LoadedProjectContext(root=root, files=[], text="", warnings=[])
+    files = discover_context_files(root)
+    chunks, warnings = [], []
+    for path in files:
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+            chunks.append(f"\n[Project Context: {os.path.basename(path)}]\n{text[:12000]}\n")
+        except Exception as e:
+            warnings.append(f"{path}: {e}")
+    return LoadedProjectContext(root=root, files=files, text="".join(chunks), warnings=warnings)
 
 
 def get_project_id():

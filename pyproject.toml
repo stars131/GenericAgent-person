@@ -21,6 +21,7 @@ dependencies = [
 ui = [
     "streamlit>=1.28",
     "pywebview>=4.0",
+    "PySide6>=6.7",
 ]
 all-frontends = [
     "python-telegram-bot>=20.0",

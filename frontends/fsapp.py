@@ -588,6 +588,21 @@ def handle_command(open_id, cmd, chat_id=None):
             send_message(chat_id, content, receive_id_type="chat_id")
         else:
             send_message(open_id, content)
+
+    receive_id = chat_id or open_id
+    rid_type = "chat_id" if chat_id else "open_id"
+
+    from frontends import fs_commands
+
+    ctx = fs_commands.CommandContext(
+        send_text=_send_cmd_response,
+        send_file=lambda path: _send_local_file(receive_id, path, receive_id_type=rid_type),
+        base_dir=PROJECT_ROOT,
+        mutating_allowed=not PUBLIC_ACCESS,
+    )
+    if fs_commands.dispatch(cmd, ctx):
+        return
+
     parts = (cmd or "").split()
     op = (parts[0] if parts else "").lower()
     if op == "/stop":
@@ -598,7 +613,10 @@ def handle_command(open_id, cmd, chat_id=None):
     elif op == "/new":
         _send_cmd_response(reset_conversation(agent))
     elif op == "/help":
-        _send_cmd_response("命令列表:\n/stop - 停止当前任务\n/status - 查看状态\n/llm - 查看当前模型列表\n/llm [n] - 切换到第 n 个模型\n/restore - 恢复上次对话历史\n/continue - 列出可恢复会话\n/continue [n] - 恢复第 n 个会话\n/new - 开启新对话并清空当前上下文\n/help - 显示帮助")
+        builtin = "通用:\n  /stop /new /help /status /llm [n] /restore /continue [n]"
+        extra = "扩展命令:\n" + "\n".join(f"  {n:<14} {h}" for n, h in fs_commands.HELP_LINES)
+        note = "注: /run /clip <text> /open 在公开访问 (fs_allowed_users=['*']) 下被禁用。"
+        _send_cmd_response("命令列表:\n" + builtin + "\n" + extra + "\n" + note)
     elif op == "/status":
         llm = agent.get_llm_name() if agent.llmclient else "未配置"
         _send_cmd_response(f"状态: {'🔴 运行中' if agent.is_running else '🟢 空闲'}\nLLM: [{agent.llm_no}] {llm}")

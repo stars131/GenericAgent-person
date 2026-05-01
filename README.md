@@ -86,14 +86,14 @@ After a few weeks, your agent instance will have a skill tree no one else in the
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. Install minimal dependencies
-pip install requests streamlit pywebview
+# 2. Install minimal dependencies (PySide6 for the Qt main window)
+pip install requests PySide6
 
 # 3. Configure API Key
-cp mykey_template.py mykey.py
+cp mykey_template_minimal.py mykey.py
 # Edit mykey.py and fill in your LLM API Key
 
-# 4. Launch
+# 4. Launch — opens the Qt main window (sessions / bots / API config / settings)
 python launch.pyw
 ```
 
@@ -135,12 +135,13 @@ Besides the default Streamlit web UI, you can also try other frontend styles:
 
 ```bash
 python frontends/qtapp.py                # Qt-based desktop app
-streamlit run frontends/stapp2.py        # Alternative Streamlit UI
 ```
+
+> Other frontend variants (`stapp2.py`, `desktop_pet.pyw` v1) are deprecated and kept only for backward compatibility — see file headers.
 
 ### Common Chat Commands
 
-The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / Telegram / Feishu / WeCom / DingTalk frontends, support these chat commands:
+The default Streamlit desktop UI started by `python launch.pyw`, plus the QQ / Telegram / Feishu / WeCom / DingTalk / WeChat frontends, support these chat commands:
 
 - `/new` - start a fresh conversation and clear the current context
 - `/continue` - list recoverable conversation snapshots
@@ -303,14 +304,14 @@ MIT License — see [LICENSE](LICENSE)
 git clone https://github.com/lsdefine/GenericAgent.git
 cd GenericAgent
 
-# 2. 安装最小依赖
-pip install requests streamlit pywebview
+# 2. 安装最小依赖（PySide6 用于 Qt 主窗口）
+pip install requests PySide6
 
 # 3. 配置 API Key
-cp mykey_template.py mykey.py
+cp mykey_template_minimal.py mykey.py
 # 编辑 mykey.py，填入你的 LLM API Key
 
-# 4. 启动
+# 4. 启动 —— 打开 Qt 主窗口（会话 / Bots / API 配置 / 设置 四标签页）
 python launch.pyw
 ```
 
@@ -344,6 +345,8 @@ python launch.pyw
 
 ```bash
 pip install pycryptodome qrcode requests
+python launch.pyw --wechat       # 集成到主启动器
+# 或单独启动
 python frontends/wechatapp.py
 ```
 
@@ -424,12 +427,13 @@ dingtalk_allowed_users = ["your_staff_id"]  # 或 ['*']
 
 ```bash
 python frontends/qtapp.py                # 基于 Qt 的桌面应用
-streamlit run frontends/stapp2.py        # 另一种 Streamlit 风格 UI
 ```
+
+> 其它前端变体（`stapp2.py`、`desktop_pet.pyw` v1）已弃用，仅保留向后兼容，详见文件顶部说明。
 
 ### 通用聊天命令
 
-默认通过 `python launch.pyw` 启动的 Streamlit 桌面 UI，以及 QQ / Telegram / 飞书 / 企业微信 / 钉钉前端，都支持以下命令：
+默认通过 `python launch.pyw` 启动的 Streamlit 桌面 UI，以及 QQ / Telegram / 飞书 / 企业微信 / 钉钉 / 微信前端，都支持以下命令：
 
 - `/new` - 开启新对话并清空当前上下文
 - `/continue` - 列出可恢复会话快照

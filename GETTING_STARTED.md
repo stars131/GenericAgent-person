@@ -54,7 +54,9 @@ python3 --version
 
 ### 创建配置文件
 
-进入项目文件夹，把 `mykey_template.py` 复制一份，重命名为 `mykey.py`。
+进入项目文件夹，把 `mykey_template_minimal.py` 复制一份，重命名为 `mykey.py`。
+
+> 模板只有 1 个推荐配置（30 行）。需要 Claude / Kimi / MiniMax / CRS / 多渠道故障转移等高级配置时，参考 `mykey_template.py`（426 行的完整参考手册）。配置文件之间的层级与覆盖规则见 [docs/CONFIG.md](docs/CONFIG.md)。
 
 用任意文本编辑器打开 `mykey.py`，填入你的 API 信息。**选一种填就行**，不用的配置删掉或留着不管都行。
 
@@ -171,7 +173,18 @@ Agent 会自己读代码、找出需要的包、全部装好。
 python3 launch.pyw
 ```
 
-启动后会出现一个桌面悬浮窗，直接在里面输入任务指令。
+启动后会出现 GenericAgent 主窗口，含 4 个标签页：
+
+| 标签 | 用途 |
+| --- | --- |
+| **会话** | 多会话管理：新建/启动/停止/打开 Streamlit、置顶、删除 |
+| **Bots** | 6 个聊天平台 bot（Telegram/QQ/飞书/企业微信/钉钉/微信）的状态 + 启停 |
+| **API 配置** | 多渠道凭据 CRUD + Profile 切换（cc-switch 风格一键换档） |
+| **设置** | 全局默认值（默认 LLM、权限模式、项目根、L4 调度等） |
+
+> 第一次启动建议先到 **API 配置** 标签页加一组凭据，然后到 **会话** 新建一个项目开聊。
+>
+> 老版的 webview 浮窗仍可通过 `python launch.pyw --legacy-shell` 启动（向后兼容）。
 
 ### 可选：让 Agent 帮你做的事
 

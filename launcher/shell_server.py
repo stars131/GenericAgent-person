@@ -2,10 +2,12 @@
 import json, os, re, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from launcher.launch_config import load_options, project_options, save_options
+
 SHELL_HTML = os.path.join(os.path.dirname(__file__), "shell.html")
 
 
-def make_handler(pm):
+def make_handler(pm, base_dir):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             pass
@@ -44,19 +46,35 @@ def make_handler(pm):
                 return
             if self.path == "/api/projects":
                 return self._json(200, pm.list())
+            if self.path == "/api/options":
+                return self._json(200, load_options(base_dir))
             return self._err(404, "not found")
 
         def do_POST(self):
             if self.path == "/api/projects":
                 body = self._read_body()
                 try:
-                    project = pm.create(body.get("name") or "新对话", auto_start=False)
+                    options = body.get("options") or project_options(load_options(base_dir))
+                    project = pm.create(body.get("name") or "新对话", auto_start=False, options=options)
                     warning = None
                     try:
                         pm.start(project["id"])
                     except Exception as exc:
                         warning = str(exc)
                     return self._json(200, {"project": pm.get(project["id"]), "warning": warning})
+                except Exception as e:
+                    return self._err(500, str(e))
+            if self.path == "/api/options":
+                try:
+                    return self._json(200, save_options(base_dir, self._read_body()))
+                except Exception as e:
+                    return self._err(500, str(e))
+            m = re.match(r"^/api/projects/([\w-]+)/options$", self.path)
+            if m:
+                try:
+                    if not pm.update_options(m.group(1), self._read_body()):
+                        return self._err(404, "project not found")
+                    return self._json(200, {"ok": True, "project": pm.get(m.group(1))})
                 except Exception as e:
                     return self._err(500, str(e))
             m = re.match(r"^/api/projects/([\w-]+)/(start|stop|rename|activate)$", self.path)
@@ -91,8 +109,9 @@ def make_handler(pm):
     return Handler
 
 
-def serve(pm, port):
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(pm))
+def serve(pm, port, base_dir=None):
+    base_dir = base_dir or getattr(pm, "base_dir", os.path.dirname(os.path.dirname(__file__)))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(pm, base_dir))
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server

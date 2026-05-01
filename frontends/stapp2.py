@@ -1,5 +1,8 @@
 import os, sys
 import html
+# DEPRECATED: stapp2.py 已被 stapp.py 取代为默认 Streamlit 前端。
+# launcher/project_manager.py 启动会话时只 spawn stapp.py，本文件不再被任何
+# 入口引用，仅作为历史 UI 风格的参考保留。新用户请使用 stapp.py。
 if sys.stdout is None: sys.stdout = open(os.devnull, "w")
 if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 try: sys.stdout.reconfigure(errors='replace')

@@ -1,5 +1,10 @@
 # launcher.pyw - GenericAgent 服务启动器
 # 纯 tkinter + 标准库，零第三方依赖，跨平台
+#
+# DEPRECATED: 此 launcher 已被 launch.pyw 取代。
+#   - 默认 webview shell (含项目管理):  python launch.pyw
+#   - Qt 桌面 launcher (含 API 配置面板): python launch.pyw --qt
+# 本文件仅保留向后兼容，不再接收新功能。
 import os, sys, socket, subprocess, threading
 import tkinter as tk
 from tkinter import ttk
