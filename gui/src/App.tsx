@@ -2,58 +2,43 @@ import { useQuery } from '@tanstack/react-query';
 
 import { fetchHealth, fetchVersion } from '@/lib/api';
 
+import { SessionsPage } from './features/sessions';
+
 /**
- * Phase 0 placeholder shell. Renders a single page that proves the IPC pipeline:
- * React  →  fetch  →  Python launcher.api_server.
- *
- * Real UI (sessions / bots / API configs / settings) lands in Phase 1+ as
- * separate route entries under src/features/.
+ * Phase 1.1 main shell. Renders the Sessions page; a real router with
+ * additional tabs (Bots / API configs / Settings) lands in subsequent
+ * commits. Until then a small "backend status" footer surfaces /api/health
+ * + /api/version so we always know the IPC pipeline is alive.
  */
 export function App(): JSX.Element {
-  const health = useQuery({ queryKey: ['health'], queryFn: fetchHealth });
+  const health = useQuery({ queryKey: ['health'], queryFn: fetchHealth, refetchInterval: 5000 });
   const version = useQuery({ queryKey: ['version'], queryFn: fetchVersion });
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border px-6 py-4">
-        <h1 className="text-xl font-semibold">GenericAgent</h1>
-        <p className="text-sm text-muted-foreground">
-          Phase 0 scaffolding — feature tabs coming soon
-        </p>
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <header className="border-b border-border px-4 py-3 flex items-center justify-between">
+        <div>
+          <h1 className="text-base font-semibold">GenericAgent</h1>
+          {version.data ? (
+            <p className="text-xs text-muted-foreground">
+              v{version.data.version} · api {version.data.api} · py{version.data.python}
+            </p>
+          ) : null}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {health.isLoading ? '🟡 connecting' : null}
+          {health.error ? '🔴 backend offline' : null}
+          {health.data ? '🟢 backend ok' : null}
+        </div>
       </header>
 
-      <main className="px-6 py-8 space-y-6">
-        <section>
-          <h2 className="font-medium mb-2">Backend health</h2>
-          {health.isLoading && <p className="text-muted-foreground">…connecting</p>}
-          {health.error && <p className="text-destructive">Error: {String(health.error)}</p>}
-          {health.data && (
-            <pre className="rounded-md bg-muted p-3 text-xs overflow-auto">
-              {JSON.stringify(health.data, null, 2)}
-            </pre>
-          )}
-        </section>
-
-        <section>
-          <h2 className="font-medium mb-2">Build info</h2>
-          {version.data && (
-            <p className="text-sm">
-              backend v{version.data.version} · api {version.data.api}
-            </p>
-          )}
-        </section>
-
-        <section className="border-t border-border pt-6 text-sm text-muted-foreground space-y-1">
-          <p>下一步：</p>
-          <ul className="list-disc list-inside">
-            <li>features/sessions — 多会话管理</li>
-            <li>features/bots — 6 个聊天 bot 启停</li>
-            <li>features/api-configs — Profile 切换 + 凭据 CRUD</li>
-            <li>features/settings — 全局默认值</li>
-            <li>每会话 API 选择（见 docs/adr/0006）</li>
-          </ul>
-        </section>
+      <main className="flex-1 overflow-auto">
+        <SessionsPage />
       </main>
+
+      <footer className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
+        下一步 tab：Bots / API 配置 / 设置 · 详见 docs/architecture/overview.md
+      </footer>
     </div>
   );
 }

@@ -22,8 +22,13 @@ st.set_page_config(page_title="Cowork", layout="wide")
 @st.cache_resource
 def init():
     agent = GeneraticAgent()
+    # ADR-0006: prefer GA_LLM_CONFIG_NAME (stable name) over GA_LLM_NO (index).
+    config_name = os.environ.get("GA_LLM_CONFIG_NAME", "").strip()
     try:
-        agent.next_llm(int(os.environ.get("GA_LLM_NO", "0") or 0))
+        if config_name and agent.select_llm_by_name(config_name):
+            pass  # selected by name
+        else:
+            agent.next_llm(int(os.environ.get("GA_LLM_NO", "0") or 0))
     except Exception:
         pass
     permission_mode = os.environ.get("GA_PERMISSION_MODE", "auto") or "auto"

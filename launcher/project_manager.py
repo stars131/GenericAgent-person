@@ -96,6 +96,7 @@ class ProjectManager:
         project.setdefault("last_active", project.get("created_at") or now)
         project.setdefault("updated_at", project.get("last_active") or now)
         project.setdefault("llm_no", int(DEFAULT_OPTIONS["llm_no"]))
+        project.setdefault("llm_config_name", "")  # ADR-0006: prefer name over index
         project.setdefault("permission_mode", DEFAULT_OPTIONS["permission_mode"])
         project.setdefault("project_root", DEFAULT_OPTIONS["project_root"])
         project.setdefault("use_project_context", DEFAULT_OPTIONS["use_project_context"])
@@ -178,6 +179,7 @@ class ProjectManager:
                 "last_active": now,
                 "updated_at": now,
                 "llm_no": opts["llm_no"],
+                "llm_config_name": "",
                 "permission_mode": opts["permission_mode"],
                 "project_root": opts["project_root"],
                 "use_project_context": opts["use_project_context"],
@@ -192,6 +194,27 @@ class ProjectManager:
         if auto_start:
             self.start(project["id"])
         return project
+
+    def set_llm(self, project_id, *, config_name=None, llm_no=None):
+        """Update per-session LLM selection. Either config_name OR llm_no.
+
+        config_name="" clears the override (falls back to llm_no / default).
+        Returns the updated project dict (without runtime fields like running).
+        """
+        with self.lock:
+            project = self._by_id(project_id)
+            if not project:
+                return None
+            if config_name is not None:
+                project["llm_config_name"] = str(config_name).strip()
+            if llm_no is not None:
+                try:
+                    project["llm_no"] = max(0, int(llm_no))
+                except (TypeError, ValueError):
+                    pass
+            self._touch_project(project)
+            self._save()
+            return dict(project)
 
     def update_options(self, project_id, options):
         opts = project_options(options)
@@ -218,6 +241,7 @@ class ProjectManager:
         env["GA_PROJECT_NAME"] = project["name"]
         env["GA_PROJECT_ID"] = project["id"]
         env["GA_LLM_NO"] = str(project.get("llm_no", 0))
+        env["GA_LLM_CONFIG_NAME"] = str(project.get("llm_config_name") or "")
         env["GA_PERMISSION_MODE"] = str(project.get("permission_mode") or DEFAULT_OPTIONS["permission_mode"])
         env["GA_PROJECT_ROOT"] = str(project.get("project_root") or "")
         env["GA_USE_PROJECT_CONTEXT"] = "1" if project.get("use_project_context", True) else "0"

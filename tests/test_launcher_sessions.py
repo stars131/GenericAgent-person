@@ -81,3 +81,42 @@ def test_save_options_normalizes_values(tmp_path):
     assert opts["scheduler"] is False
     assert opts["llm_no"] == 3
     assert opts["permission_mode"] == "auto"
+
+
+def test_set_llm_persists_config_name_and_spawn_env(tmp_path, monkeypatch):
+    """ADR-0006: per-session API selection via name flows through to
+    GA_LLM_CONFIG_NAME in the spawned subprocess env."""
+    pm = ProjectManager(str(tmp_path))
+    project = pm.create("named", auto_start=False)
+    pm.set_llm(project["id"], config_name="claude-relay-1")
+
+    # Persistence
+    pm2 = ProjectManager(str(tmp_path))
+    assert pm2.get(project["id"])["llm_config_name"] == "claude-relay-1"
+
+    # Spawn env injection
+    captured = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, creationflags=0):
+        captured["env"] = env
+        return FakeProc()
+
+    monkeypatch.setattr("launcher.project_manager.subprocess.Popen", fake_popen)
+    pm2._spawn(pm2.get(project["id"]))
+    assert captured["env"]["GA_LLM_CONFIG_NAME"] == "claude-relay-1"
+
+
+def test_set_llm_can_clear_config_name(tmp_path):
+    pm = ProjectManager(str(tmp_path))
+    project = pm.create("named", auto_start=False)
+    pm.set_llm(project["id"], config_name="x")
+    pm.set_llm(project["id"], config_name="")
+    assert pm.get(project["id"])["llm_config_name"] == ""
+
+
+def test_set_llm_unknown_id_returns_none(tmp_path):
+    pm = ProjectManager(str(tmp_path))
+    assert pm.set_llm("nope", config_name="anything") is None

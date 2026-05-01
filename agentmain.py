@@ -103,7 +103,28 @@ class GeneraticAgent:
         name = self.get_llm_name(model=True)
         if 'glm' in name or 'minimax' in name or 'kimi' in name: load_tool_schema('_cn')
         else: load_tool_schema()
-    def list_llms(self): 
+
+    def select_llm_by_name(self, config_name):
+        """ADR-0006: per-session API config selection by `name` rather than index.
+
+        Returns True if a client with matching `name` was found and made active,
+        False otherwise (caller should fall back to llm_no).
+        """
+        self.load_llm_sessions()
+        target = (config_name or '').strip()
+        if not target:
+            return False
+        for i, client in enumerate(self.llmclients):
+            try:
+                cname = getattr(client.backend, 'name', '') or ''
+            except Exception:
+                cname = ''
+            if cname == target:
+                self.next_llm(i)
+                return True
+        return False
+
+    def list_llms(self):
         self.load_llm_sessions()
         return [(i, self.get_llm_name(b), i == self.llm_no) for i, b in enumerate(self.llmclients)]
     def get_llm_name(self, b=None, model=False):
