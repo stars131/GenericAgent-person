@@ -7,6 +7,7 @@ if sys.stderr is None: sys.stderr = open(os.devnull, "w")
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
+from permissions import PermissionDecision, ToolPermissionRequest, tool_metadata
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
     """代码执行器
@@ -260,13 +261,35 @@ def consume_file(dr, file):
 
 class GenericAgentHandler(BaseHandler):
     '''Generic Agent 工具库，包含多种工具的实现。工具函数自动加上了 do_ 前缀。实际工具名没有前缀。'''
-    def __init__(self, parent, last_history=None, cwd='./temp'):
+    def __init__(self, parent, last_history=None, cwd='./temp', permission_policy=None, permission_prompter=None, project_root=None):
         self.parent = parent
         self.working = {}
         self.cwd = cwd;  self.current_turn = 0
+        self.project_root = project_root
+        self.permission_policy = permission_policy
+        self.permission_prompter = permission_prompter
         self.history_info = last_history if last_history else []
         self.code_stop_signal = []
         self._done_hooks = []
+
+    def dispatch(self, tool_name, args, response, index=0):
+        metadata = tool_metadata(tool_name)
+        request = ToolPermissionRequest(tool_name, args, self.cwd, self.project_root, metadata)
+        if self.permission_policy:
+            decision = self.permission_policy.decide(request)
+            if decision.decision == PermissionDecision.ASK and self.permission_prompter:
+                decision = self.permission_prompter.ask(request, decision.message)
+            if decision.decision != PermissionDecision.ALLOW:
+                msg = decision.message or f"Permission denied: {metadata.display_name}"
+                yield f"[Permission] {msg}\n"
+                return StepOutcome({"status": "error", "msg": msg}, next_prompt="\n")
+        start_t = time.monotonic()
+        try:
+            return (yield from super().dispatch(tool_name, args, response, index=index))
+        finally:
+            elapsed = time.monotonic() - start_t
+            if tool_name != 'no_tool':
+                yield f"[Tool completed in {elapsed:.1f}s]\n"
 
     def _get_abs_path(self, path):
         if not path: return ""
@@ -438,6 +461,27 @@ class GenericAgentHandler(BaseHandler):
         next_prompt = self._get_anchor_prompt(skip=args.get('_index', 0) > 0)
         #next_prompt += '\n[SYSTEM TIPS] 此函数一般在任务开始或中间时调用，如果任务已成功完成应该是start_long_term_update用于结算长期记忆。\n'
         return StepOutcome({"result": "working key_info updated"}, next_prompt=next_prompt)
+
+    def do_sop_search(self, args, response):
+        '''在 Sophub 检索别人分享的 SOP / skill。'''
+        from tools.sop_tools import sop_search
+        query = args.get('query', '') or ''
+        top_k = args.get('top_k', 5)
+        try:
+            top_k = int(top_k)
+        except (TypeError, ValueError):
+            top_k = 5
+        result = sop_search(query, top_k=top_k)
+        yield f"[sop_search] {query!r} (top {top_k})\n"
+        return StepOutcome(result, next_prompt="\n")
+
+    def do_sop_read(self, args, response):
+        '''按 id 拉取 Sophub SOP 完整内容。应用前必须先 read。'''
+        from tools.sop_tools import sop_read
+        sop_id = args.get('sop_id', '') or ''
+        result = sop_read(sop_id)
+        yield f"[sop_read] {sop_id}\n"
+        return StepOutcome(result, next_prompt="\n")
 
     def do_no_tool(self, args, response):
         '''这是一个特殊工具，由引擎自主调用，不要包含在TOOLS_SCHEMA里。

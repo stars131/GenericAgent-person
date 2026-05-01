@@ -2,7 +2,13 @@
 import json, os, random, secrets, socket, subprocess, sys, threading, time
 from datetime import datetime
 
+from launcher.launch_config import DEFAULT_OPTIONS, project_options
+
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _now():
+    return datetime.now().isoformat(timespec="seconds")
 
 try:
     import psutil
@@ -73,13 +79,33 @@ class ProjectManager:
                     data = json.load(f)
                 self.projects = data.get("projects", [])
                 for project in self.projects:
-                    project.setdefault("last_error", "")
+                    self._normalize_project(project)
                 self.active_id = data.get("active_id")
                 return
             except Exception as e:
                 print(f"[ProjectManager] load failed, starting fresh: {e}")
         self.projects = []
         self.active_id = None
+
+    def _normalize_project(self, project):
+        now = _now()
+        project.setdefault("last_error", "")
+        project.setdefault("pinned", False)
+        project.setdefault("description", "")
+        project.setdefault("created_at", now)
+        project.setdefault("last_active", project.get("created_at") or now)
+        project.setdefault("updated_at", project.get("last_active") or now)
+        project.setdefault("llm_no", int(DEFAULT_OPTIONS["llm_no"]))
+        project.setdefault("permission_mode", DEFAULT_OPTIONS["permission_mode"])
+        project.setdefault("project_root", DEFAULT_OPTIONS["project_root"])
+        project.setdefault("use_project_context", DEFAULT_OPTIONS["use_project_context"])
+        project.setdefault("autonomous_enabled", DEFAULT_OPTIONS["autonomous_enabled"])
+        return project
+
+    def _touch_project(self, project):
+        stamp = _now()
+        project["updated_at"] = stamp
+        return stamp
 
     def _save(self):
         tmp = self.json_path + ".tmp"
@@ -132,20 +158,33 @@ class ProjectManager:
             out = []
             for p in self.projects:
                 out.append({**p, "running": self.is_running(p)})
-            return {"projects": out, "active_id": self.active_id}
+            pinned = [p for p in out if p.get("pinned")]
+            normal = [p for p in out if not p.get("pinned")]
+            pinned.sort(key=lambda p: str(p.get("last_active") or ""), reverse=True)
+            normal.sort(key=lambda p: str(p.get("last_active") or ""), reverse=True)
+            return {"projects": pinned + normal, "active_id": self.active_id}
 
-    def create(self, name, auto_start=True):
+    def create(self, name, auto_start=True, options=None):
         with self.lock:
             name = (name or "").strip() or "新对话"
+            now = _now()
+            opts = project_options(options)
             project = {
                 "id": self._gen_id(),
                 "name": name,
                 "port": self._alloc_port(),
                 "pid": None,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-                "last_active": datetime.now().isoformat(timespec="seconds"),
-                "llm_no": 0,
+                "created_at": now,
+                "last_active": now,
+                "updated_at": now,
+                "llm_no": opts["llm_no"],
+                "permission_mode": opts["permission_mode"],
+                "project_root": opts["project_root"],
+                "use_project_context": opts["use_project_context"],
+                "autonomous_enabled": opts["autonomous_enabled"],
                 "last_error": "",
+                "pinned": False,
+                "description": "",
             }
             self.projects.append(project)
             self.active_id = project["id"]
@@ -153,6 +192,17 @@ class ProjectManager:
         if auto_start:
             self.start(project["id"])
         return project
+
+    def update_options(self, project_id, options):
+        opts = project_options(options)
+        with self.lock:
+            project = self._by_id(project_id)
+            if not project:
+                return False
+            project.update(opts)
+            self._touch_project(project)
+            self._save()
+        return True
 
     def _read_log_tail(self, log_path, max_chars=1200):
         if not log_path or not os.path.exists(log_path):
@@ -167,6 +217,11 @@ class ProjectManager:
         env = os.environ.copy()
         env["GA_PROJECT_NAME"] = project["name"]
         env["GA_PROJECT_ID"] = project["id"]
+        env["GA_LLM_NO"] = str(project.get("llm_no", 0))
+        env["GA_PERMISSION_MODE"] = str(project.get("permission_mode") or DEFAULT_OPTIONS["permission_mode"])
+        env["GA_PROJECT_ROOT"] = str(project.get("project_root") or "")
+        env["GA_USE_PROJECT_CONTEXT"] = "1" if project.get("use_project_context", True) else "0"
+        env["GA_AUTONOMOUS_ENABLED"] = "1" if project.get("autonomous_enabled", False) else "0"
         env["PYTHONUNBUFFERED"] = "1"
         cmd = [
             sys.executable,
@@ -214,13 +269,15 @@ class ProjectManager:
                 project["port"] = self._alloc_port()
             project["last_error"] = ""
             project["pid"] = self._spawn(project)
-            project["last_active"] = datetime.now().isoformat(timespec="seconds")
+            stamp = self._touch_project(project)
+            project["last_active"] = stamp
             self._save()
         deadline = time.time() + 15
         while time.time() < deadline:
             if _port_alive(project["port"]):
                 with self.lock:
                     project["last_error"] = ""
+                    self._touch_project(project)
                     self._save()
                 return True
             proc = self._procs.get(project_id)
@@ -239,6 +296,7 @@ class ProjectManager:
         with self.lock:
             project["pid"] = None
             project["last_error"] = reason
+            self._touch_project(project)
             self._save()
         raise RuntimeError(reason)
 
@@ -277,6 +335,7 @@ class ProjectManager:
         with self.lock:
             project["pid"] = None
             project["last_error"] = ""
+            self._touch_project(project)
             self._save()
         return True
 
@@ -289,6 +348,7 @@ class ProjectManager:
             if not project:
                 return False
             project["name"] = name
+            self._touch_project(project)
             self._save()
         return True
 
@@ -304,9 +364,32 @@ class ProjectManager:
 
     def set_active(self, project_id):
         with self.lock:
-            if not self._by_id(project_id):
+            project = self._by_id(project_id)
+            if not project:
                 return False
             self.active_id = project_id
+            stamp = self._touch_project(project)
+            project["last_active"] = stamp
+            self._save()
+        return True
+
+    def touch(self, project_id):
+        with self.lock:
+            project = self._by_id(project_id)
+            if not project:
+                return False
+            stamp = self._touch_project(project)
+            project["last_active"] = stamp
+            self._save()
+        return True
+
+    def pin(self, project_id, pinned=True):
+        with self.lock:
+            project = self._by_id(project_id)
+            if not project:
+                return False
+            project["pinned"] = bool(pinned)
+            self._touch_project(project)
             self._save()
         return True
 

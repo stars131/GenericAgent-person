@@ -3,6 +3,7 @@ tmp/
 .tmp/
 .deps/
 .pip-cache/
+pytest-cache-files-*/
 
 __pycache__/
 *.py[cod]

@@ -9,11 +9,10 @@ import socket
 import subprocess
 import sys
 
-import webview
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from launcher.project_manager import ProjectManager
 from launcher.shell_server import serve as serve_shell
+from launcher.launch_config import load_options, project_options, save_options
 
 WINDOW_WIDTH, WINDOW_HEIGHT, RIGHT_PADDING, TOP_PADDING = 820, 900, 0, 100
 
@@ -108,9 +107,52 @@ if __name__ == "__main__":
     parser.add_argument("--no-feishu", dest="feishu", action="store_false", help="Do not start Feishu bot")
     parser.add_argument("--wecom", action="store_true", help="Start WeCom bot")
     parser.add_argument("--dingtalk", "--dt", dest="dingtalk", action="store_true", help="Start DingTalk bot")
-    parser.add_argument("--sched", action="store_true", help="Start task scheduler")
-    parser.add_argument("--llm_no", type=int, default=0, help="LLM index")
+    parser.add_argument("--wechat", action="store_true", help="Start personal WeChat bot")
+    parser.set_defaults(sched=None)
+    parser.add_argument("--sched", dest="sched", action="store_true", help="Start task scheduler")
+    parser.add_argument("--no-sched", dest="sched", action="store_false", help="Do not start task scheduler")
+    parser.add_argument("--llm_no", type=int, default=None, help="LLM index")
+    parser.add_argument("--qt", action="store_true", help="Start Qt launcher MVP")
     args = parser.parse_args()
+
+    if args.qt:
+        launch_options = load_options(script_dir)
+        cli_overrides = {}
+        for key in ("tg", "qq", "feishu", "wecom", "dingtalk", "wechat"):
+            if getattr(args, key, False):
+                cli_overrides[key] = True
+        if args.sched is not None:
+            cli_overrides["scheduler"] = args.sched
+        if args.llm_no is not None:
+            cli_overrides["llm_no"] = args.llm_no
+        if cli_overrides:
+            launch_options = save_options(script_dir, {**launch_options, **cli_overrides})
+        # Spawn requested bots before handing off to Qt launcher (which manages
+        # its own scheduler + project list internally).
+        if launch_options.get("tg"): spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
+        if launch_options.get("qq"): spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
+        feishu_ready, feishu_reason = get_feishu_startup_status()
+        if launch_options.get("feishu") and feishu_ready:
+            spawn_background("fsapp.py"); print("[Launch] Feishu Bot started")
+        elif launch_options.get("feishu"):
+            print(f"[Launch] Feishu Bot requested but not started: {feishu_reason}")
+        if launch_options.get("wecom"): spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
+        if launch_options.get("dingtalk"): spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
+        if launch_options.get("wechat"): spawn_background("wechatapp.py"); print("[Launch] WeChat Bot started")
+        from launcher.qt_launcher import main as qt_main
+        sys.exit(qt_main())
+
+    launch_options = load_options(script_dir)
+    cli_overrides = {}
+    for key in ("tg", "qq", "feishu", "wecom", "dingtalk", "wechat"):
+        if getattr(args, key, False):
+            cli_overrides[key] = True
+    if args.sched is not None:
+        cli_overrides["scheduler"] = args.sched
+    if args.llm_no is not None:
+        cli_overrides["llm_no"] = args.llm_no
+    if cli_overrides:
+        launch_options = save_options(script_dir, {**launch_options, **cli_overrides})
 
     lock = acquire_singleton()
     if lock is None:
@@ -124,6 +166,7 @@ if __name__ == "__main__":
         print("[Launch] First run — creating default project")
         active = pm.create("默认对话", auto_start=False)
         try:
+            pm.update_options(active["id"], project_options(launch_options))
             pm.start(active["id"])
         except Exception as exc:
             print(f"[Launch] {exc}")
@@ -140,29 +183,30 @@ if __name__ == "__main__":
                 print(f"[Launch] {exc}")
 
     shell_port = find_free_port()
-    serve_shell(pm, shell_port)
+    serve_shell(pm, shell_port, script_dir)
     print(f"[Launch] Shell on http://127.0.0.1:{shell_port}/")
 
     # Bots — kept tied to launcher lifetime (atexit kill), orthogonal to local projects
-    if args.tg: spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
-    if args.qq: spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
+    if launch_options.get("tg"): spawn_background("tgapp.py"); print("[Launch] Telegram Bot started")
+    if launch_options.get("qq"): spawn_background("qqapp.py"); print("[Launch] QQ Bot started")
 
     feishu_ready, feishu_reason = get_feishu_startup_status()
-    if args.feishu and feishu_ready:
+    if launch_options.get("feishu") and feishu_ready:
         spawn_background("fsapp.py"); print("[Launch] Feishu Bot started")
-    elif args.feishu:
+    elif launch_options.get("feishu"):
         print(f"[Launch] Feishu Bot requested but not started: {feishu_reason}")
     else:
         print("[Launch] Feishu Bot not enabled (use --feishu to start)")
 
-    if args.wecom: spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
-    if args.dingtalk: spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
+    if launch_options.get("wecom"): spawn_background("wecomapp.py"); print("[Launch] WeCom Bot started")
+    if launch_options.get("dingtalk"): spawn_background("dingtalkapp.py"); print("[Launch] DingTalk Bot started")
+    if launch_options.get("wechat"): spawn_background("wechatapp.py"); print("[Launch] WeChat Bot started")
 
-    if args.sched:
+    if launch_options.get("scheduler", True):
         scheduler_proc = subprocess.Popen(
             [sys.executable, os.path.join(script_dir, "agentmain.py"),
              "--reflect", os.path.join(script_dir, "reflect", "scheduler.py"),
-             "--llm_no", str(args.llm_no)],
+             "--llm_no", str(launch_options.get("llm_no", 0))],
             creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         atexit.register(scheduler_proc.kill)
@@ -174,6 +218,7 @@ if __name__ == "__main__":
     else:
         x_pos = 100
 
+    import webview
     window = webview.create_window(
         title="GenericAgent",
         url=f"http://127.0.0.1:{shell_port}/",

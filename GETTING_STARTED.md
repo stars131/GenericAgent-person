@@ -54,7 +54,9 @@ python3 --version
 
 ### 创建配置文件
 
-进入项目文件夹，把 `mykey_template.py` 复制一份，重命名为 `mykey.py`。
+进入项目文件夹，把 `mykey_template_minimal.py` 复制一份，重命名为 `mykey.py`。
+
+> 模板只有 1 个推荐配置（30 行）。需要 Claude / Kimi / MiniMax / CRS / 多渠道故障转移等高级配置时，参考 `mykey_template.py`（426 行的完整参考手册）。配置文件之间的层级与覆盖规则见 [docs/CONFIG.md](docs/CONFIG.md)。
 
 用任意文本编辑器打开 `mykey.py`，填入你的 API 信息。**选一种填就行**，不用的配置删掉或留着不管都行。
 

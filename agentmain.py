@@ -9,6 +9,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from llmcore import reload_mykeys, LLMSession, ToolClient, ClaudeSession, MixinSession, NativeToolClient, NativeClaudeSession, NativeOAISession
 from agent_loop import agent_runner_loop
 from ga import GenericAgentHandler, smart_format, get_global_memory, format_error, consume_file
+from permissions import InteractivePermissionPrompter, PermissionPolicy
+from project_context import load_project_context
+try:
+    from cli_commands import SharedCommandHandler
+except ImportError:
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontends'))
+    from cli_commands import SharedCommandHandler
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 def load_tool_schema(suffix=''):
@@ -50,6 +57,13 @@ class GeneraticAgent:
         self.is_running = False; self.stop_sig = False
         self.llm_no = 0;  self.inc_out = False
         self.handler = None; self.verbose = True
+        self.permission_mode = 'auto'
+        self.permission_policy = None
+        self.permission_prompter = None
+        self.project_root = None
+        self.project_context = None
+        self.use_project_context = False
+        self.cli_mode = False
         self.load_llm_sessions()
 
     def load_llm_sessions(self):
@@ -109,21 +123,23 @@ class GeneraticAgent:
         self.task_queue.put({"query": query, "source": source, "images": images or [], "output": display_queue})
         return display_queue
 
-    # i know it is dangerous, but raw_query is dangerous enough it doesn't enlarge
     def _handle_slash_cmd(self, raw_query, display_queue):
-        if not raw_query.startswith('/'): return raw_query
-        if _sm := re.match(r'/session\.(\w+)=(.*)', raw_query.strip()):
-            k, v = _sm.group(1), _sm.group(2)
-            vfile = os.path.join(script_dir, 'temp', v)
-            if os.path.isfile(vfile): v = open(vfile, encoding='utf-8').read().strip()
-            try: v = json.loads(v)  # cover number parsing
-            except (json.JSONDecodeError, ValueError): pass
-            setattr(self.llmclient.backend, k, v)
-            display_queue.put({'done': smart_format(f"✅ session.{k} = {repr(v)}", max_str_len=500), 'source': 'system'})
+        if not raw_query.startswith('/'):
+            return raw_query
+        result = SharedCommandHandler(self).handle(raw_query)
+        if result.handled:
+            display_queue.put({'done': result.message or '', 'source': 'system'})
             return None
-        if raw_query.strip() == '/resume':
-            return r'用re.findall(r"<history>\\n\[(?:USER\|Agent)\].*?</history>", content, re.DOTALL) 扫temp/model_responses/下时间最近的10个文件(除本PID)，取每文件最后一个匹配(注意JSON里换行是字面\\n)作为该会话内容，按mtime倒序，每个用一句话总结聊了什么让我选择；选定后再简单读该文件末尾作为聊天基础'
-        return raw_query
+        return result.query
+
+    def configure_cli(self, permission_mode='ask', project_root=None, use_project_context=True, interactive=True, cwd_project=None):
+        self.cli_mode = interactive if cwd_project is None else bool(cwd_project)
+        self.permission_mode = permission_mode
+        self.project_context = load_project_context(project_root or os.getcwd(), enabled=use_project_context)
+        self.project_root = self.project_context.root
+        self.use_project_context = use_project_context
+        self.permission_policy = PermissionPolicy(mode=permission_mode, interactive=interactive)
+        self.permission_prompter = InteractivePermissionPrompter(self.permission_policy) if interactive else None
 
     def run(self):
         while True:
@@ -137,8 +153,12 @@ class GeneraticAgent:
             self.history.append(f"[USER]: {rquery}")
             
             sys_prompt = get_system_prompt() + getattr(self.llmclient.backend, 'extra_sys_prompt', '')
+            if self.use_project_context and self.project_context and self.project_context.text:
+                sys_prompt += "\n" + self.project_context.text
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            handler = GenericAgentHandler(self, self.history, os.path.join(script_dir, 'temp'))
+            cwd = self.project_root if self.cli_mode and self.project_root else os.path.join(script_dir, 'temp')
+            handler = GenericAgentHandler(self, self.history, cwd, permission_policy=self.permission_policy,
+                                          permission_prompter=self.permission_prompter, project_root=self.project_root)
             if self.handler and 'key_info' in self.handler.working: 
                 ki = re.sub(r'\n\[SYSTEM\] 此为.*?工作记忆[。\n]*', '', self.handler.working['key_info'])  # 去旧
                 handler.working['key_info'] = ki
@@ -173,7 +193,73 @@ class GeneraticAgent:
                 self.task_queue.task_done()
                 if self.handler is not None: self.handler.code_stop_signal.append(1)
 
-    
+
+def format_duration(seconds):
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, sec = divmod(seconds, 60)
+    return f"{int(minutes)}m {int(sec):02d}s"
+
+
+class InteractiveCLI:
+    def __init__(self, agent, show_duration=True):
+        self.agent = agent
+        self.show_duration = show_duration
+        self.commands = SharedCommandHandler(agent)
+
+    def print_banner(self):
+        llm = self.agent.get_llm_name() if self.agent.llmclient else '未配置'
+        ctx_files = getattr(getattr(self.agent, 'project_context', None), 'files', []) or []
+        print('GenericAgent CLI')
+        print(f'Project: {self.agent.project_root or os.getcwd()}')
+        print(f'LLM: [{self.agent.llm_no}] {llm}')
+        print(f'Permission: {self.agent.permission_mode}')
+        print(f'Context files: {len(ctx_files)}')
+        print('Type /help for commands. Ctrl+D exits.')
+
+    def run(self):
+        try: import readline
+        except Exception: pass
+        self.agent.inc_out = True
+        self.print_banner()
+        while True:
+            try:
+                q = input('ga> ').strip()
+            except EOFError:
+                print('\nBye.')
+                break
+            except KeyboardInterrupt:
+                if self.agent.is_running:
+                    self.agent.abort()
+                print('\n[Interrupted]')
+                continue
+            if not q:
+                continue
+            if q.startswith('/'):
+                result = self.commands.handle(q)
+                if result.handled:
+                    print(result.message or '')
+                    if result.should_exit:
+                        break
+                    continue
+                q = result.query or q
+            started = time.monotonic()
+            try:
+                dq = self.agent.put_task(q, source='user')
+                while True:
+                    item = dq.get()
+                    if 'next' in item: print(item['next'], end='', flush=True)
+                    if 'done' in item:
+                        print()
+                        break
+            except KeyboardInterrupt:
+                self.agent.abort()
+                print('\n[Interrupted]')
+            finally:
+                if self.show_duration:
+                    print(f'[Done in {format_duration(time.monotonic() - started)}]')
+
+
 if __name__ == '__main__':
     import argparse
     from datetime import datetime
@@ -184,6 +270,11 @@ if __name__ == '__main__':
     parser.add_argument('--llm_no', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--bg', action='store_true', help='popen, print PID, exit')
+    parser.add_argument('--permission-mode', choices=['ask', 'auto', 'read-only', 'dangerous'], default=None)
+    parser.add_argument('--project-root')
+    parser.add_argument('--no-project-context', action='store_true')
+    parser.add_argument('--show-duration', dest='show_duration', action='store_true', default=True)
+    parser.add_argument('--no-show-duration', dest='show_duration', action='store_false')
     args = parser.parse_args()
 
     if args.bg:
@@ -199,6 +290,10 @@ if __name__ == '__main__':
     agent = GeneraticAgent()
     agent.next_llm(args.llm_no)
     agent.verbose = args.verbose
+    interactive_mode = not (args.task or args.reflect)
+    permission_mode = args.permission_mode or ('ask' if interactive_mode else 'read-only')
+    agent.configure_cli(permission_mode=permission_mode, project_root=args.project_root,
+                        use_project_context=not args.no_project_context, interactive=interactive_mode)
     threading.Thread(target=agent.run, daemon=True).start()
 
     if args.task:
@@ -253,18 +348,4 @@ if __name__ == '__main__':
                 except Exception as e: print(f'[Reflect] on_done error: {e}')
             if getattr(mod, 'ONCE', False): print('[Reflect] ONCE=True, exiting.'); break
     else:
-        try: import readline
-        except Exception: pass
-        agent.inc_out = True
-        while True:
-            q = input('> ').strip()
-            if not q: continue
-            try:
-                dq = agent.put_task(q, source='user')
-                while True:
-                    item = dq.get()
-                    if 'next' in item: print(item['next'], end='', flush=True)
-                    if 'done' in item: print(); break
-            except KeyboardInterrupt:
-                agent.abort()
-                print('\n[Interrupted]')
+        InteractiveCLI(agent, show_duration=args.show_duration).run()

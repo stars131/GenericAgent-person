@@ -69,5 +69,20 @@
     "name": "start_long_term_update",
     "description": "准备开始提炼记忆。发现值得长期记忆的信息（环境事实/用户偏好/避坑经验）时调用此工具。已记忆更新或在自主流程内时无需调用。超15轮完成的任务必须调用以沉淀经验",
     "parameters": {"type": "object", "properties": {}}}
+  },
+  {"type": "function", "function": {
+    "name": "sop_search",
+    "description": "在 Sophub (fudankw.cn/sophub) 搜索别人分享的 SOP / 技能。遇到陌生任务先用这个查——可能已经有人上传了可直接复用的验证过的流程。返回 top 结果含 id、标题、评分和简短预览",
+    "parameters": {"type": "object", "properties": {
+      "query": {"type": "string", "description": "自然语言查询（中英均可）"},
+      "top_k": {"type": "integer", "description": "结果数量 1-25", "default": 5}},
+      "required": ["query"]}}
+  },
+  {"type": "function", "function": {
+    "name": "sop_read",
+    "description": "按 id（来自 sop_search 结果）拉取 SOP 完整内容。**应用 SOP 前必须先 read 拿到真正步骤**，不要只看预览就动手",
+    "parameters": {"type": "object", "properties": {
+      "sop_id": {"type": "string", "description": "sop_search 返回的 SOP id"}},
+      "required": ["sop_id"]}}
   }
 ]
