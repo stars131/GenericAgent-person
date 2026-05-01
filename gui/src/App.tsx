@@ -1,16 +1,27 @@
+import { useState } from 'react';
+
 import { useQuery } from '@tanstack/react-query';
 
 import { fetchHealth, fetchVersion } from '@/lib/api';
 
+import { BotsPage } from './features/bots';
 import { SessionsPage } from './features/sessions';
 
+type TabKey = 'sessions' | 'bots';
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'sessions', label: '会话' },
+  { key: 'bots', label: 'Bots' },
+];
+
 /**
- * Phase 1.1 main shell. Renders the Sessions page; a real router with
- * additional tabs (Bots / API configs / Settings) lands in subsequent
- * commits. Until then a small "backend status" footer surfaces /api/health
- * + /api/version so we always know the IPC pipeline is alive.
+ * Phase 1.2 main shell. Two tabs are wired (sessions, bots); the remaining
+ * tabs (API configs, settings) ship in subsequent commits. Header surfaces
+ * backend health + version. Tab state is local — refreshing the webview
+ * resets to "sessions" by design.
  */
 export function App(): JSX.Element {
+  const [tab, setTab] = useState<TabKey>('sessions');
   const health = useQuery({ queryKey: ['health'], queryFn: fetchHealth, refetchInterval: 5000 });
   const version = useQuery({ queryKey: ['version'], queryFn: fetchVersion });
 
@@ -25,6 +36,24 @@ export function App(): JSX.Element {
             </p>
           ) : null}
         </div>
+
+        <nav className="flex items-center gap-1">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setTab(t.key)}
+              className={`px-3 py-1 text-sm rounded-md ${
+                tab === t.key
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-muted'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
         <div className="text-xs text-muted-foreground">
           {health.isLoading ? '🟡 connecting' : null}
           {health.error ? '🔴 backend offline' : null}
@@ -33,11 +62,12 @@ export function App(): JSX.Element {
       </header>
 
       <main className="flex-1 overflow-auto">
-        <SessionsPage />
+        {tab === 'sessions' ? <SessionsPage /> : null}
+        {tab === 'bots' ? <BotsPage /> : null}
       </main>
 
       <footer className="border-t border-border px-4 py-2 text-xs text-muted-foreground">
-        下一步 tab：Bots / API 配置 / 设置 · 详见 docs/architecture/overview.md
+        下一步 tab：API 配置 / 设置 · 详见 docs/architecture/overview.md
       </footer>
     </div>
   );

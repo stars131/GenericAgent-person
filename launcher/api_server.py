@@ -44,6 +44,7 @@ READY_MARKER = "__GA_READY__"
 
 _started_at = time.monotonic()
 _project_manager = None  # lazy ProjectManager instance
+_bot_manager = None  # lazy BotManager instance
 
 
 # ─── Lazy backend wiring ───────────────────────────────────────────────
@@ -61,6 +62,15 @@ def _pm():
         from launcher.project_manager import ProjectManager
         _project_manager = ProjectManager(_project_root())
     return _project_manager
+
+
+def _bm():
+    """Singleton BotManager."""
+    global _bot_manager
+    if _bot_manager is None:
+        from launcher.bot_manager import BotManager
+        _bot_manager = BotManager(_project_root())
+    return _bot_manager
 
 
 # ─── Route handlers ────────────────────────────────────────────────────
@@ -194,6 +204,76 @@ def _route_profiles_get(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"active": state.get("active"), "profiles": state.get("profiles", {})}
 
 
+def _route_bots_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    from launcher.bot_manager import BOT_SPECS
+
+    statuses = _bm().status_all()
+    rows = []
+    for key, spec in BOT_SPECS.items():
+        st = statuses[key]
+        rows.append({
+            "key": key,
+            "display_name": spec.display_name,
+            "script": spec.script,
+            "configured": st.configured,
+            "missing_fields": st.missing_fields,
+            "sdk_installed": st.sdk_installed,
+            "missing_modules": st.missing_modules,
+            "running_self": st.running_self,
+            "running_external": st.running_external,
+            "running": st.running,
+            "log_path": st.log_path,
+        })
+    return 200, {"bots": rows}
+
+
+def _route_bot_start(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    from launcher.bot_manager import BOT_SPECS
+
+    key = req["params"]["key"]
+    if key not in BOT_SPECS:
+        return 404, {"error": "unknown_bot", "key": key}
+    ok, message = _bm().start(key)
+    if not ok:
+        return 409, {"error": "start_failed", "key": key, "message": message}
+    return 200, {"key": key, "message": message}
+
+
+def _route_bot_stop(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    from launcher.bot_manager import BOT_SPECS
+
+    key = req["params"]["key"]
+    if key not in BOT_SPECS:
+        return 404, {"error": "unknown_bot", "key": key}
+    ok, message = _bm().stop(key)
+    if not ok:
+        return 500, {"error": "stop_failed", "key": key, "message": message}
+    return 200, {"key": key, "message": message}
+
+
+def _route_bot_log(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Return the last N lines of a bot's log file. Useful for debugging from
+    the UI without the user opening the file system."""
+    from launcher.bot_manager import BOT_SPECS
+
+    key = req["params"]["key"]
+    if key not in BOT_SPECS:
+        return 404, {"error": "unknown_bot", "key": key}
+    st = _bm().status(key)
+    path = st.log_path
+    if not path or not os.path.isfile(path):
+        return 200, {"key": key, "path": path, "lines": [], "exists": False}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except Exception as exc:
+        return 500, {"error": "read_failed", "detail": str(exc)}
+    # Cap the response so we don't send 50 MB of bot chatter to a webview
+    tail = text[-16000:] if len(text) > 16000 else text
+    lines = tail.splitlines()[-200:]
+    return 200, {"key": key, "path": path, "lines": lines, "exists": True}
+
+
 # Path patterns. `<id>` is the projects' generated id.
 ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any]]]]] = [
     ("GET", "/api/health", _route_health),
@@ -211,6 +291,10 @@ ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any
     ("PUT", "/api/projects/<id>/llm", _route_project_set_llm),
     ("GET", "/api/configs", _route_configs_list),
     ("GET", "/api/profiles", _route_profiles_get),
+    ("GET", "/api/bots", _route_bots_list),
+    ("POST", "/api/bots/<key>/start", _route_bot_start),
+    ("POST", "/api/bots/<key>/stop", _route_bot_stop),
+    ("GET", "/api/bots/<key>/log", _route_bot_log),
 ]
 
 
@@ -365,8 +449,9 @@ def serve_threaded(port: int | None = None) -> tuple[int, threading.Thread]:
 
 def reset_state_for_tests() -> None:
     """Reset module-level singletons. Tests use this between cases."""
-    global _project_manager, _started_at
+    global _project_manager, _bot_manager, _started_at
     _project_manager = None
+    _bot_manager = None
     _started_at = time.monotonic()
 
 
