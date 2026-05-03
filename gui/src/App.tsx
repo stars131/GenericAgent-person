@@ -1,31 +1,41 @@
 import { useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 
+import { LanguageToggle } from '@/i18n/LanguageToggle';
 import { fetchHealth, fetchVersion } from '@/lib/api';
 import { useKeyboardShortcuts, type TabKey } from '@/lib/keyboard';
 
 import { ApiConfigsPage } from './features/api-configs';
+import { ActivityPage } from './features/activity';
 import { BotsPage } from './features/bots';
+import { OnboardingModal } from './features/onboarding';
 import { SessionsPage } from './features/sessions';
 import { SettingsPage } from './features/settings';
+import { SkillsPage } from './features/skills';
 import { ThemeToggle } from './features/theme';
+import { TokenUsageBadge } from './features/token-usage';
 
-const TABS: { key: TabKey; label: string; hotkey: string }[] = [
-  { key: 'sessions', label: '会话', hotkey: '⌘1' },
-  { key: 'bots', label: 'Bots', hotkey: '⌘2' },
-  { key: 'api-configs', label: 'API 配置', hotkey: '⌘3' },
-  { key: 'settings', label: '设置', hotkey: '⌘4' },
+const TAB_KEYS: { key: TabKey; tKey: string; hotkey: string }[] = [
+  { key: 'sessions', tKey: 'app.tabs.sessions', hotkey: '⌘1' },
+  { key: 'bots', tKey: 'app.tabs.bots', hotkey: '⌘2' },
+  { key: 'api-configs', tKey: 'app.tabs.apiConfigs', hotkey: '⌘3' },
+  { key: 'activity', tKey: 'app.tabs.activity', hotkey: '⌘4' },
+  { key: 'skills', tKey: 'app.tabs.skills', hotkey: '⌘5' },
+  { key: 'settings', tKey: 'app.tabs.settings', hotkey: '⌘6' },
 ];
 
 /**
  * Phase 1 main shell + Milestone 1 polish.
  *
- * Four tabs (sessions, bots, api-configs, settings) on par with the Qt
- * launcher. Header surfaces backend health + version, theme toggle, tab
- * keyboard shortcuts (Cmd/Ctrl+1..4, Cmd/Ctrl+, , Cmd/Ctrl+/).
+ * Six tabs (sessions, bots, api-configs, activity, skills, settings) on par
+ * with the Qt launcher plus the new self-evolution surfaces. Header surfaces
+ * backend health + version, theme toggle, language toggle, tab keyboard
+ * shortcuts (Cmd/Ctrl+1..6, Cmd/Ctrl+, , Cmd/Ctrl+/).
  */
 export function App(): JSX.Element {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<TabKey>('sessions');
   const health = useQuery({ queryKey: ['health'], queryFn: fetchHealth, refetchInterval: 5000 });
   const version = useQuery({ queryKey: ['version'], queryFn: fetchVersion });
@@ -45,29 +55,34 @@ export function App(): JSX.Element {
         </div>
 
         <nav className="flex items-center gap-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              title={`${t.label}  (${t.hotkey})`}
-              className={`px-3 py-1 text-sm rounded-md ${
-                tab === t.key
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-muted'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          {TAB_KEYS.map((entry) => {
+            const label = t(entry.tKey);
+            return (
+              <button
+                key={entry.key}
+                type="button"
+                onClick={() => setTab(entry.key)}
+                title={`${label}  (${entry.hotkey})`}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  tab === entry.key
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-muted'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="flex items-center gap-2">
+          <TokenUsageBadge />
+          <LanguageToggle />
           <ThemeToggle />
-          <span className="text-xs text-muted-foreground" title="Cmd/Ctrl+/ 查看快捷键">
-            {health.isLoading ? '🟡 connecting' : null}
-            {health.error ? '🔴 backend offline' : null}
-            {health.data ? '🟢 backend ok' : null}
+          <span className="text-xs text-muted-foreground" title={t('app.shortcutsHint')}>
+            {health.isLoading ? t('app.status.connecting') : null}
+            {health.error ? t('app.status.offline') : null}
+            {health.data ? t('app.status.ok') : null}
           </span>
         </div>
       </header>
@@ -76,8 +91,11 @@ export function App(): JSX.Element {
         {tab === 'sessions' ? <SessionsPage /> : null}
         {tab === 'bots' ? <BotsPage /> : null}
         {tab === 'api-configs' ? <ApiConfigsPage /> : null}
+        {tab === 'activity' ? <ActivityPage /> : null}
+        {tab === 'skills' ? <SkillsPage /> : null}
         {tab === 'settings' ? <SettingsPage /> : null}
       </main>
+      <OnboardingModal />
     </div>
   );
 }

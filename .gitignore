@@ -111,6 +111,15 @@ sche_tasks/
 assets/tmwd_cdp_bridge/config.js
 assets/copilot_proxy.pyw
 **log.*
+# `**log.*` is broad — it would otherwise eat our activity-log Python
+# source. Whitelist it explicitly.
+!launcher/activity_log.py
+!tests/test_activity_log.py
+
+# Tauri-generated schemas (regenerated on build) and TS incremental
+# build info (per-machine cache).
+gui/src-tauri/gen/
+gui/*.tsbuildinfo
 
 # Reflect (ignore new files, whitelist existing)
 reflect/*

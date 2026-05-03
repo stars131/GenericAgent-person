@@ -64,6 +64,15 @@ export function BotLogDrawer({ botKey, onClose }: BotLogDrawerProps): JSX.Elemen
             >
               {mode === 'live' ? '切换快照' : '切换实时'}
             </button>
+            {mode === 'live' && (stream.status === 'closed' || stream.status === 'error') ? (
+              <button
+                type="button"
+                onClick={stream.reconnect}
+                className="px-2 py-1 text-xs rounded border border-border hover:bg-accent"
+              >
+                重连
+              </button>
+            ) : null}
             {mode === 'snapshot' ? (
               <button
                 type="button"

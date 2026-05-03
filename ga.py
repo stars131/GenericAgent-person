@@ -8,6 +8,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agent_loop import BaseHandler, StepOutcome, json_default
 from permissions import PermissionDecision, ToolPermissionRequest, tool_metadata
+from launcher import activity_log
 
 def code_run(code, code_type="python", timeout=60, cwd=None, code_cwd=None, stop_signal=[]):
     """代码执行器
@@ -284,11 +285,24 @@ class GenericAgentHandler(BaseHandler):
                 yield f"[Permission] {msg}\n"
                 return StepOutcome({"status": "error", "msg": msg}, next_prompt="\n")
         start_t = time.monotonic()
+        if tool_name != 'no_tool':
+            activity_log.record({
+                'phase': 'tool_start',
+                'turn': self.current_turn,
+                'tool': tool_name,
+                'args': activity_log.compact_args(tool_name, args),
+            })
         try:
             return (yield from super().dispatch(tool_name, args, response, index=index))
         finally:
             elapsed = time.monotonic() - start_t
             if tool_name != 'no_tool':
+                activity_log.record({
+                    'phase': 'tool_end',
+                    'turn': self.current_turn,
+                    'tool': tool_name,
+                    'elapsed_s': round(elapsed, 3),
+                })
                 yield f"[Tool completed in {elapsed:.1f}s]\n"
 
     def _get_abs_path(self, path):
@@ -574,6 +588,13 @@ class GenericAgentHandler(BaseHandler):
             next_prompt += "\n[DANGER] 你遗漏了<summary>，必须按协议一直在每次回复中用<summary>中输出极简单行摘要！" 
         summary = smart_format(summary, max_str_len=100)
         self.history_info.append(f'[Agent] {summary}')
+        activity_log.record({
+            'phase': 'turn_end',
+            'turn': turn,
+            'summary': summary,
+            'exit_reason': exit_reason or {},
+            'related_sop': self.working.get('related_sop') or '',
+        })
         if turn % 65 == 0 and 'plan' not in str(self.working.get('related_sop')):
             next_prompt += f"\n\n[DANGER] 已连续执行第 {turn} 轮。你必须总结情况进行ask_user，不允许继续重试。"
         elif turn % 7 == 0:

@@ -10,20 +10,24 @@
  */
 import { useEffect } from 'react';
 
-export type TabKey = 'sessions' | 'bots' | 'api-configs' | 'settings';
+export type TabKey = 'sessions' | 'bots' | 'api-configs' | 'activity' | 'skills' | 'settings';
 
 const NUMBER_TO_TAB: Record<string, TabKey> = {
   '1': 'sessions',
   '2': 'bots',
   '3': 'api-configs',
-  '4': 'settings',
+  '4': 'activity',
+  '5': 'skills',
+  '6': 'settings',
 };
 
 const HELP = `GenericAgent 快捷键:
   Cmd/Ctrl + 1   会话
   Cmd/Ctrl + 2   Bots
   Cmd/Ctrl + 3   API 配置
-  Cmd/Ctrl + 4   设置
+  Cmd/Ctrl + 4   活动
+  Cmd/Ctrl + 5   技能
+  Cmd/Ctrl + 6   设置
   Cmd/Ctrl + ,   设置 (别名)
   Cmd/Ctrl + /   显示本帮助
 `;

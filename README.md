@@ -29,6 +29,33 @@ Every time GenericAgent solves a new task, it automatically crystallizes the exe
 - **Token Efficient**: <30K context window — a fraction of the 200K–1M other agents consume. Layered memory ensures the right knowledge is always in scope. Less noise, fewer hallucinations, higher success rate — at a fraction of the cost.
 
 
+## 🖥️ Platform Support
+
+The core loop, 9 atomic tools, layered memory, and all LLM/bot integrations run anywhere Python 3.10+ runs. A handful of "deep OS" skills under `memory/` use `pywin32` directly and are Windows-only — they're opt-in (an SOP must reference them) so a fresh install on macOS or Linux simply skips them and the agent grows other skills instead.
+
+| Capability | Windows | macOS | Linux | Notes |
+|---|:---:|:---:|:---:|---|
+| Core agent loop & 9 atomic tools | ✅ | ✅ | ✅ | Stdlib only |
+| LLM backends (Claude / GPT / Gemini / Kimi / MiniMax) | ✅ | ✅ | ✅ | HTTP, no platform deps |
+| Tauri + React GUI (`gui/`, default) | ✅ | ✅ | ✅ | Tauri 2; `bundle.targets: "all"` |
+| Qt legacy launcher (`launch.pyw --qt-legacy`) | ✅ | ✅¹ | ✅¹ | PySide6 cross-platform |
+| `code_run` shell | PowerShell | bash | bash | Auto-selected by `os.name` |
+| Browser control (`web_scan` / `web_execute_js`) | ✅ | ✅ | ✅ | via `tmwd_cdp_bridge` Chrome extension |
+| Bots: Telegram / QQ / Feishu / WeCom / DingTalk | ✅ | ✅ | ✅ | All HTTP / WebSocket |
+| Bot: Personal WeChat (iLink protocol) | ✅ | ✅ | ✅ | Login-token; no client injection |
+| Mobile control via ADB (`memory/adb_ui.py`) | ✅² | ✅² | ✅² | Needs Android platform-tools + USB device |
+| Vision API (multimodal) | ✅ | ✅ | ✅ | Plain HTTP to a Vision-capable endpoint |
+| **Windows-only skills (opt-in)** | | | | |
+| `ljqCtrl` raw keyboard / mouse | ✅ | ❌ | ❌ | Uses `win32api` / `win32con` |
+| `ocr_utils` window screenshot | ✅ | ❌ | ❌ | Uses `win32gui` / `win32ui` |
+| `procmem_scanner` process memory scanner | ✅ | ❌ | ❌ | Reads other processes' memory via Win32 APIs |
+| Desktop WeChat client driving | ✅ | ❌ | ❌ | Drives `Weixin.exe` window via win32gui |
+
+¹ The Qt legacy launcher is cross-platform via PySide6 but primary smoke-testing happens on Windows. Report regressions in [issues](https://github.com/lsdefine/GenericAgent/issues).
+
+² ADB itself is cross-platform; install platform-tools via `winget install Google.PlatformTools` / `brew install android-platform-tools` / your distro's package manager.
+
+
 ## 🧬 Self-Evolution Mechanism
 
 This is what fundamentally distinguishes GenericAgent from every other agent framework.
@@ -252,6 +279,32 @@ MIT License — see [LICENSE](LICENSE)
 - **强执行力**: 注入真实浏览器（保留登录态），9 个原子工具直接接管系统
 - **高兼容性**: 支持 Claude / Gemini / Kimi / MiniMax 等主流模型，跨平台运行
 - **极致省 Token**: 上下文窗口不到 30K，是其他 Agent（200K–1M）的零头。分层记忆让关键信息始终在场——噪声更少，幻觉更低，成功率反而更高，而成本低一个数量级。
+
+## 🖥️ 平台支持
+
+核心 Agent Loop、9 个原子工具、分层记忆、所有 LLM / Bot 集成在 Windows / macOS / Linux 上都能跑（仅依赖 Python 3.10+ 与标准库）。少量 `memory/` 下的"深度 OS"技能用了 `pywin32`，仅 Windows 可用——它们是**按需触发**（要被 SOP 引用才会激活），所以 mac / Linux 上的新装实例会自动跳过它们，并自主生长其他跨平台技能。
+
+| 能力 | Windows | macOS | Linux | 说明 |
+|---|:---:|:---:|:---:|---|
+| 核心 Agent Loop & 9 个原子工具 | ✅ | ✅ | ✅ | 仅依赖标准库 |
+| LLM 后端（Claude / GPT / Gemini / Kimi / MiniMax） | ✅ | ✅ | ✅ | 纯 HTTP，无平台依赖 |
+| Tauri + React GUI（`gui/`，默认入口） | ✅ | ✅ | ✅ | Tauri 2；`bundle.targets: "all"` |
+| Qt 老版 launcher（`launch.pyw --qt-legacy`） | ✅ | ✅¹ | ✅¹ | PySide6 跨平台 |
+| `code_run` shell | PowerShell | bash | bash | 按 `os.name` 自动切换 |
+| 浏览器控制（`web_scan` / `web_execute_js`） | ✅ | ✅ | ✅ | 通过 `tmwd_cdp_bridge` Chrome 扩展 |
+| Bot：Telegram / QQ / 飞书 / 企微 / 钉钉 | ✅ | ✅ | ✅ | HTTP / WebSocket |
+| Bot：个人微信（iLink 协议） | ✅ | ✅ | ✅ | Token 登录，不注入客户端 |
+| 手机控制（`memory/adb_ui.py`） | ✅² | ✅² | ✅² | 需 Android platform-tools 与 USB 设备 |
+| Vision API（多模态） | ✅ | ✅ | ✅ | 调用具备视觉能力的 HTTP 端点 |
+| **仅 Windows 技能（按需触发）** | | | | |
+| `ljqCtrl` 原始键鼠控制 | ✅ | ❌ | ❌ | `win32api` / `win32con` |
+| `ocr_utils` 窗口截图 | ✅ | ❌ | ❌ | `win32gui` / `win32ui` |
+| `procmem_scanner` 进程内存扫描 | ✅ | ❌ | ❌ | Win32 API 读取其他进程内存 |
+| 微信桌面客户端驱动 | ✅ | ❌ | ❌ | win32gui 控制 `Weixin.exe` 窗口 |
+
+¹ Qt 老版 launcher 通过 PySide6 跨平台运行，但主要冒烟测试发生在 Windows 上，回归请走 [Issues](https://github.com/lsdefine/GenericAgent/issues)。
+
+² ADB 本身跨平台，安装方式：`winget install Google.PlatformTools` / `brew install android-platform-tools` / 各发行版包管理器。
 
 ## 🧬 自我进化机制
 

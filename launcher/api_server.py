@@ -488,6 +488,74 @@ def _route_bot_log(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     return 200, {"key": key, "path": path, "lines": lines, "exists": True}
 
 
+def _route_activity_recent(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Return the latest agent activity events (tool calls + turn boundaries)."""
+    from launcher import activity_log as _alog
+
+    raw_limit = req.get("query", {}).get("limit", "200")
+    try:
+        limit = max(1, min(2000, int(raw_limit)))
+    except (TypeError, ValueError):
+        limit = 200
+    events = _alog.iter_recent(limit)
+    return 200, {"events": events, "path": _alog.latest_path()}
+
+
+def _route_skill_outcomes(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Aggregate turn_end events into per-skill outcome counts."""
+    from launcher import activity_log as _alog
+
+    summary = _alog.summarize_outcomes()
+    skills = [{"name": name, **stats} for name, stats in summary.items()]
+    skills.sort(key=lambda s: s["total"], reverse=True)
+    return 200, {"skills": skills}
+
+
+def _route_skills_list(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Return SOP files merged with their outcome counts (the skill catalogue)."""
+    from launcher import skills as _skills
+
+    return 200, {"skills": _skills.list_skills()}
+
+
+def _route_token_usage(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Snapshot llmcore's running token-usage counters."""
+    import llmcore as _llm
+
+    return 200, _llm.get_token_usage()
+
+
+def _route_token_usage_reset(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Zero the token-usage counters (GUI 'reset' button)."""
+    import llmcore as _llm
+
+    _llm.reset_token_usage()
+    return 200, _llm.get_token_usage()
+
+
+def _route_onboarding_status(_req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """First-run detection: does the user have a usable LLM config?"""
+    from launcher import onboarding as _ob
+
+    return 200, _ob.status()
+
+
+def _route_onboarding_save(req: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Wizard submit — persist provider + key/base/model into ``.env``."""
+    from launcher import onboarding as _ob
+
+    body = req.get("body") or {}
+    provider = str(body.get("provider", "") or "")
+    apikey = str(body.get("apikey", "") or "")
+    base_url = str(body.get("base_url", "") or "")
+    model = str(body.get("model", "") or "")
+    try:
+        result = _ob.save_minimal(provider, apikey=apikey, base_url=base_url, model=model)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    return 200, result
+
+
 # Path patterns. `<id>` is the projects' generated id.
 ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any]]]]] = [
     ("GET", "/api/health", _route_health),
@@ -518,6 +586,13 @@ ROUTES: list[tuple[str, str, Callable[[dict[str, Any]], tuple[int, dict[str, Any
     ("PUT", "/api/settings", _route_settings_put),
     ("GET", "/api/credentials", _route_credentials_get),
     ("PUT", "/api/credentials", _route_credentials_put),
+    ("GET", "/api/activity", _route_activity_recent),
+    ("GET", "/api/skills/outcomes", _route_skill_outcomes),
+    ("GET", "/api/skills", _route_skills_list),
+    ("GET", "/api/token_usage", _route_token_usage),
+    ("POST", "/api/token_usage/reset", _route_token_usage_reset),
+    ("GET", "/api/onboarding/status", _route_onboarding_status),
+    ("POST", "/api/onboarding/save", _route_onboarding_save),
 ]
 
 
@@ -701,6 +776,14 @@ def _stream_bot_log(handler: "_Handler", params: dict[str, str]) -> None:
     _tail_log_file(handler, log_path)
 
 
+@_sse_route("/api/activity/stream")
+def _stream_activity(handler: "_Handler", params: dict[str, str]) -> None:
+    """Tail the agent activity log (current day's JSONL)."""
+    from launcher import activity_log as _alog
+
+    _tail_log_file(handler, _alog.latest_path())
+
+
 def _match_sse(path: str):
     for pattern, fn in SSE_ROUTES:
         params = _match_pattern(pattern, path)
@@ -746,13 +829,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         return data if isinstance(data, dict) else {}
 
     def _dispatch(self, method: str) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         handler, params = _match_route(method, path)
         if handler is None:
             self._send_json({"error": "not_found", "path": path, "method": method}, status=404)
             return
         body = self._read_body() if method in {"POST", "PUT", "PATCH", "DELETE"} else {}
-        req = {"method": method, "path": path, "params": params, "body": body}
+        from urllib.parse import parse_qs
+        query = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
+        req = {"method": method, "path": path, "params": params, "body": body, "query": query}
         try:
             status, payload = handler(req)
         except Exception as exc:

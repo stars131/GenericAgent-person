@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { useTranslation } from 'react-i18next';
+
 import { useSettings, usePatchSettings } from '../hooks/useSettings';
 import { PERMISSION_MODES, type Settings } from '../types';
 
@@ -18,6 +20,7 @@ const BOT_KEYS: { key: keyof Settings; label: string }[] = [
  * the backend merges into launcher_options.json).
  */
 export function SettingsPage(): JSX.Element {
+  const { t } = useTranslation();
   const settings = useSettings();
   const patch = usePatchSettings();
 
@@ -27,12 +30,12 @@ export function SettingsPage(): JSX.Element {
   }, [settings.data]);
 
   if (settings.isLoading) {
-    return <p className="p-4 text-muted-foreground">加载中…</p>;
+    return <p className="p-4 text-muted-foreground">{t('common.loading')}</p>;
   }
   if (settings.error || !draft) {
     return (
       <p className="p-4 text-destructive">
-        加载失败：{String(settings.error)}
+        {t('common.backendLoadFailed', { error: String(settings.error) })}
       </p>
     );
   }
@@ -54,10 +57,8 @@ export function SettingsPage(): JSX.Element {
   return (
     <form onSubmit={onSave} className="flex flex-col gap-6 p-4 max-w-2xl mx-auto">
       <header>
-        <h1 className="text-xl font-semibold">设置</h1>
-        <p className="text-sm text-muted-foreground">
-          全局默认值。已运行的会话需重启才能采用新默认值。
-        </p>
+        <h1 className="text-xl font-semibold">{t('settings.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p>
       </header>
 
       <Group title="会话默认">
@@ -136,24 +137,26 @@ export function SettingsPage(): JSX.Element {
 
       <div className="flex items-center justify-end gap-2 sticky bottom-0 bg-background py-2 border-t border-border">
         {patch.isError ? (
-          <span className="text-xs text-destructive mr-auto">保存失败：{String(patch.error)}</span>
+          <span className="text-xs text-destructive mr-auto">
+            {t('common.saveFailed', { error: String(patch.error) })}
+          </span>
         ) : null}
         {patch.isSuccess ? (
-          <span className="text-xs text-muted-foreground mr-auto">已保存</span>
+          <span className="text-xs text-muted-foreground mr-auto">{t('common.saved')}</span>
         ) : null}
         <button
           type="button"
           onClick={onReset}
           className="px-3 py-1 text-sm rounded border border-border hover:bg-accent"
         >
-          重置
+          {t('common.reset')}
         </button>
         <button
           type="submit"
           disabled={patch.isPending}
           className="px-3 py-1 text-sm rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          保存
+          {t('common.save')}
         </button>
       </div>
     </form>

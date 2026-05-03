@@ -11,7 +11,7 @@
  *   - error: last error message if any
  *
  * Component contract:
- *   const { lines, status, clear } = useLogStream(`/api/bots/${k}/log/stream`);
+ *   const { lines, status, clear, reconnect } = useLogStream(`/api/bots/${k}/log/stream`);
  *
  * Pass `null` to disable.
  */
@@ -26,6 +26,7 @@ interface UseLogStreamResult {
   status: StreamStatus;
   error: string | null;
   clear: () => void;
+  reconnect: () => void;
 }
 
 const DEFAULT_MAX_LINES = 1000;
@@ -38,6 +39,10 @@ export function useLogStream(
   const [lines, setLines] = useState<string[]>([]);
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Bumping epoch forces the connection effect to tear down + reopen.
+  // The backend's SSE stream ends after `max_seconds`; without this,
+  // users would have to close and reopen the panel to resume tailing.
+  const [epoch, setEpoch] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const linesRef = useRef<string[]>([]);
 
@@ -56,6 +61,10 @@ export function useLogStream(
   const clear = useCallback(() => {
     linesRef.current = [];
     setLines([]);
+  }, []);
+
+  const reconnect = useCallback(() => {
+    setEpoch((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -104,7 +113,7 @@ export function useLogStream(
       esRef.current = null;
       setStatus('closed');
     };
-  }, [path, append]);
+  }, [path, append, epoch]);
 
-  return { lines, status, error, clear };
+  return { lines, status, error, clear, reconnect };
 }

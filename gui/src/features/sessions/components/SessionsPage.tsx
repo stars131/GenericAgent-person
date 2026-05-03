@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { useTranslation } from 'react-i18next';
+
 import type { Project } from '../types';
 import {
   useActivateProject,
@@ -8,15 +10,18 @@ import {
   useRenameProject,
 } from '../hooks/useSessions';
 
+import { SessionLogDrawer } from './SessionLogDrawer';
 import { SessionRow } from './SessionRow';
 
 export function SessionsPage(): JSX.Element {
+  const { t } = useTranslation();
   const projects = useProjects();
   const create = useCreateProject();
   const activate = useActivateProject();
   const rename = useRenameProject();
 
   const [newName, setNewName] = useState('');
+  const [logProject, setLogProject] = useState<Project | null>(null);
 
   const onCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +33,7 @@ export function SessionsPage(): JSX.Element {
   };
 
   const onRename = (project: Project) => {
-    const next = window.prompt('新名称：', project.name);
+    const next = window.prompt(t('sessions.renamePrompt'), project.name);
     if (next && next.trim() && next !== project.name) {
       rename.mutate({ id: project.id, name: next.trim() });
     }
@@ -37,10 +42,8 @@ export function SessionsPage(): JSX.Element {
   return (
     <div className="flex flex-col gap-4 p-4 max-w-3xl mx-auto">
       <header>
-        <h1 className="text-xl font-semibold">会话</h1>
-        <p className="text-sm text-muted-foreground">
-          多会话同时运行；每个会话可单独选 API 配置（ADR-0006）。
-        </p>
+        <h1 className="text-xl font-semibold">{t('sessions.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('sessions.subtitle')}</p>
       </header>
 
       <form onSubmit={onCreate} className="flex gap-2">
@@ -48,7 +51,7 @@ export function SessionsPage(): JSX.Element {
           type="text"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder="新会话名称"
+          placeholder={t('sessions.newPlaceholder')}
           className="flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
         />
         <button
@@ -56,21 +59,23 @@ export function SessionsPage(): JSX.Element {
           disabled={!newName.trim() || create.isPending}
           className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm hover:bg-primary/90 disabled:opacity-50"
         >
-          新建
+          {t('common.create')}
         </button>
       </form>
 
-      {projects.isLoading ? <p className="text-muted-foreground">加载中…</p> : null}
+      {projects.isLoading ? (
+        <p className="text-muted-foreground">{t('common.loading')}</p>
+      ) : null}
       {projects.error ? (
         <p className="text-destructive text-sm">
-          后端连接失败：{String(projects.error)}
+          {t('common.backendLoadFailed', { error: String(projects.error) })}
         </p>
       ) : null}
 
       {projects.data ? (
         <ul className="flex flex-col gap-2">
           {projects.data.projects.length === 0 ? (
-            <li className="text-sm text-muted-foreground italic">暂无会话，先在上面新建一个。</li>
+            <li className="text-sm text-muted-foreground italic">{t('sessions.empty')}</li>
           ) : null}
           {projects.data.projects.map((p) => (
             <li key={p.id}>
@@ -79,10 +84,19 @@ export function SessionsPage(): JSX.Element {
                 isActive={p.id === projects.data.active_id}
                 onActivate={(id) => activate.mutate(id)}
                 onRename={onRename}
+                onShowLog={setLogProject}
               />
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {logProject ? (
+        <SessionLogDrawer
+          projectId={logProject.id}
+          projectName={logProject.name}
+          onClose={() => setLogProject(null)}
+        />
       ) : null}
     </div>
   );

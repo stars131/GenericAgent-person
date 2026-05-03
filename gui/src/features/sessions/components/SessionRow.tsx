@@ -13,6 +13,7 @@ interface SessionRowProps {
   isActive: boolean;
   onActivate: (id: string) => void;
   onRename: (project: Project) => void;
+  onShowLog: (project: Project) => void;
 }
 
 export function SessionRow({
@@ -20,6 +21,7 @@ export function SessionRow({
   isActive,
   onActivate,
   onRename,
+  onShowLog,
 }: SessionRowProps): JSX.Element {
   const start = useStartProject();
   const stop = useStopProject();
@@ -95,6 +97,13 @@ export function SessionRow({
             className="px-2 py-0.5 text-xs rounded border border-border hover:bg-accent"
           >
             重命名
+          </button>
+          <button
+            type="button"
+            onClick={() => onShowLog(project)}
+            className="px-2 py-0.5 text-xs rounded border border-border hover:bg-accent"
+          >
+            日志
           </button>
           <button
             type="button"

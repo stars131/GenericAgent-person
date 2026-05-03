@@ -1,20 +1,35 @@
 # 配置文件层级与覆盖规则
 
-GenericAgent 启动时会从三处加载配置，按下列顺序合并：
+GenericAgent 启动时会从以下来源加载配置，按下列顺序合并：
 
-1. **`mykey.py`**（必需）
+1. **Shell 环境变量**（永远胜出）
+   - 已经 `export` 的变量永远不会被 `.env` 覆盖。
+
+2. **`.env`**（可选，零依赖）
+   - 复制 `.env.example` 为 `.env`，填入 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` 即可第一次跑通。
+   - 由 `launcher/dotenv_shim.py` 解析（stdlib only，不需要 `python-dotenv`）。
+   - 加载结果写进 `os.environ`，因此 `mykey.py` 也可以 `os.environ.get('OPENAI_API_KEY')` 引用。
+
+3. **`mykey.py`**（推荐路径）
    - 由用户从 `mykey_template_minimal.py` 或 `mykey_template.py` 复制而来。
    - 这是配置的"基础层"，适合手工维护。
 
-2. **`mykey_local_override.py`**（可选，自动生成）
+4. **`mykey_local_override.py`**（可选，自动生成）
    - 由 `python launch.pyw --qt`（Qt launcher）的"API 配置"面板写入。
    - 加载顺序在 `mykey.py` 之后，**同名变量会覆盖** `mykey.py` 的值。
    - 文件顶部带有警告："Edit through the launcher UI; manual changes may be overwritten."
 
-3. **`mykey.json`**（兜底，仅当 `mykey.py` 不存在时使用）
+5. **`mykey.json`**（兜底，仅当 `mykey.py` 不存在时使用）
    - 适合容器化部署或不方便维护 .py 配置的环境。
 
-合并逻辑见 `llmcore.py:21-39` 的 `_load_mykeys()`。
+6. **`.env` 自动合成**（最后的兜底）
+   - 当 `mykey.py` / `mykey.json` 都不存在但 `.env` 设置了已知 key 时，
+     `dotenv_shim.synthesize_mykeys()` 会即时合成最小可用配置（`native_oai_config_env` /
+     `native_claude_config_env` + `mixin_config`），让 `OPENAI_API_KEY` 一行就能跑起来。
+   - 可识别的 key：`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`，可加 `_BASE_URL` `_MODEL` 后缀，
+     或前缀 `GA_` 避免与系统级环境变量冲突。
+
+合并逻辑见 `llmcore.py:_load_mykeys()`。
 
 ## 变量命名决定 Session 类型
 

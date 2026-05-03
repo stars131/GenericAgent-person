@@ -15,7 +15,7 @@ import {
   type Project,
   type ProfilesState,
   type ProjectsList,
-} from './types';
+} from '../types';
 
 async function request<T>(
   path: string,

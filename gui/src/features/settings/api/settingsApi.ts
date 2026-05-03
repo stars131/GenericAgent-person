@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ApiError } from '@/lib/api';
 import { getApiBase } from '@/lib/env';
 
-import { settingsResponseSchema, type Settings } from './types';
+import { settingsResponseSchema, type Settings } from '../types';
 
 async function request<T>(
   path: string,

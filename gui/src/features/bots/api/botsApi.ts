@@ -10,7 +10,7 @@ import {
   type BotActionResponse,
   type BotLog,
   type BotsList,
-} from './types';
+} from '../types';
 
 async function request<T>(
   path: string,

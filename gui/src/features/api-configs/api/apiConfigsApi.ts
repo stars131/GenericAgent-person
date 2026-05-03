@@ -9,7 +9,7 @@ import {
   type ApiConfigEntry,
   type ApiConfigsList,
   type ProfilesState,
-} from './types';
+} from '../types';
 
 async function request<T>(
   path: string,

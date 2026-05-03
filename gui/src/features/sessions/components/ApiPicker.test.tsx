@@ -73,7 +73,7 @@ describe('ApiPicker', () => {
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-relay-2' } });
 
     await waitFor(() => {
-      expect(setSpy).toHaveBeenCalledWith({ id: 'p_x', configName: 'claude-relay-2' });
+      expect(setSpy).toHaveBeenCalledWith('p_x', { config_name: 'claude-relay-2' });
     });
   });
 
